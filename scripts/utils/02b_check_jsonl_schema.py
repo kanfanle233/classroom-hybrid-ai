@@ -5,7 +5,7 @@ from typing import Iterable, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from contracts.schemas import (
+from classroom_pipeline.contracts.schemas import (
     validate_align_file,
     validate_event_query_record,
     validate_json_file,

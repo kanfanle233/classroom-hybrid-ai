@@ -1,0 +1,3067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Classroom Behavior Visual Analysis — VSumVis</title>
+<style>
+/* ============================================================
+   ACADEMIC LIGHT THEME
+   ============================================================ */
+:root {
+  --bg:           #F8F9FA;
+  --panel-bg:     #FFFFFF;
+  --border:       #E5E7EB;
+  --border-light: #F0F1F3;
+  --text:         #374151;
+  --text-dim:     #9CA3AF;
+  --text-mid:     #6B7280;
+  --text-strong:  #111827;
+
+  --accent:       #3B82F6;
+  --accent-light: #DBEAFE;
+  --match:        #059669;
+  --match-bg:     #D1FAE5;
+  --uncertain:    #D97706;
+  --uncertain-bg: #FEF3C7;
+  --mismatch:     #DC2626;
+  --mismatch-bg:  #FEE2E2;
+
+  --shadow-sm:    0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md:    0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg:    0 4px 12px rgba(0,0,0,0.08);
+
+  --dim-opacity:  0.12;
+  --radius:       6px;
+
+  --font-ui:      'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+}
+
+* { box-sizing:border-box; margin:0; padding:0; }
+
+body {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== Dashboard Grid ===== */
+#dashboard {
+  display: grid;
+  grid-template-columns: 270px 1fr 370px;
+  grid-template-rows: 1fr 1fr 270px;
+  grid-template-areas:
+    "left proj detail"
+    "left proj detail"
+    "left bottom bottom";
+  height: 100vh;
+  width: 100vw;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
+}
+
+.panel {
+  background: var(--panel-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  gap: 8px;
+  background: #FAFBFC;
+}
+
+.panel-body {
+  flex:1;
+  overflow:auto;
+  position:relative;
+}
+
+#panel-left  { grid-area:left; }
+#panel-proj  { grid-area:proj; }
+#panel-detail{ grid-area:detail; }
+#panel-bottom{ grid-area:bottom; }
+
+/* ===== Summary Strip ===== */
+#summary-strip {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.summary-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.summary-chip .label { color: var(--text-dim); font-size: 9px; text-transform: uppercase; letter-spacing:0.4px; }
+.summary-chip .value { color: var(--text-strong); font-weight: 600; font-size: 12px; }
+.summary-chip.contract-OK  { border-color: #A7F3D0; }
+.summary-chip.contract-WARN{ border-color: #FDE68A; }
+.summary-chip.contract-FAIL{ border-color: #FECACA; }
+.summary-chip.contract-OK  .value { color: var(--match); }
+.summary-chip.contract-WARN .value { color: var(--uncertain); }
+.summary-chip.contract-FAIL .value { color: var(--mismatch); }
+
+/* ===== Case List ===== */
+#case-list { flex:1; overflow-y:auto; }
+.case-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 11px;
+}
+.case-item:hover { background: #F3F4F6; }
+.case-item.active { background: var(--accent-light); border-left: 3px solid var(--accent); }
+.case-item .case-name { font-weight: 600; color: var(--text-strong); margin-bottom: 2px; font-size: 12px; }
+.case-item .case-meta { color: var(--text-mid); font-size: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.case-item .case-sparkline { margin-top: 4px; height: 22px; }
+.case-item .case-tags { display:flex; gap:5px; margin-top:3px; }
+.tag { font-size:9px; padding:1px 7px; border-radius:3px; font-weight:500; }
+.tag-full { background:var(--accent-light); color:var(--accent); }
+.tag-sr   { background:var(--match-bg); color:var(--match); }
+
+/* ===== Video Player ===== */
+#video-section {
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+  background: #FAFBFC;
+}
+#video-player {
+  width: 100%;
+  background: #000;
+  display: block;
+  cursor: pointer;
+}
+.video-controls {
+  display: flex;
+  gap: 4px;
+  padding: 5px 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.video-controls select,
+.video-controls button {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex:1;
+  transition: border-color 0.15s;
+}
+.video-controls select:hover,
+.video-controls button:hover { border-color: var(--accent); }
+.video-controls .btn-play {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.video-controls .btn-play:hover { opacity: 0.85; }
+.video-status {
+  width: 100%;
+  padding: 0 8px 6px;
+  min-height: 14px;
+  font-size: 9px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.video-status.warn { color: var(--uncertain); }
+.video-status.error { color: var(--mismatch); }
+
+/* ===== Projection View ===== */
+#proj-svg { width:100%; height:100%; }
+.proj-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.proj-controls select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.proj-legend {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  margin-left: auto;
+  color: var(--text-mid);
+}
+.proj-legend span { display:flex; align-items:center; gap:4px; }
+.legend-dot { width:8px; height:8px; border-radius:50%; }
+
+/* ===== Detail View ===== */
+#pcp-svg {
+  width:100%; height:100%;
+  display:block;
+}
+#panel-detail { overflow: visible; }
+#panel-detail .panel-body { overflow-y: auto; overflow-x: hidden; }
+#pcp-body { overflow: hidden; }
+#detail-table-wrap {
+  max-height:170px;
+  overflow-y:auto;
+  border-top:1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+/* Parallel Coordinates axis drag cursors */
+.pcp-axis-group { cursor: default; }
+.pcp-axis-group .axis-handle { cursor: grab; }
+.pcp-axis-group.dragging .axis-handle { cursor: grabbing; }
+.pcp-axis-group.dragging { z-index: 10; }
+.pcp-axis-group.dragging .pcp-axis-line { stroke: var(--accent); stroke-width: 1.8; }
+.pcp-axis-group.dragging .pcp-axis-label { font-weight: 700; fill: var(--accent); }
+#detail-table-wrap table { width:100%; font-size:10px; border-collapse:collapse; }
+#detail-table-wrap th {
+  position:sticky; top:0; background:var(--panel-bg);
+  padding:5px 7px; text-align:left; color:var(--text-dim);
+  border-bottom:1px solid var(--border);
+  font-weight:600; font-size:9px; text-transform:uppercase;
+  letter-spacing:0.5px; cursor:pointer; white-space:nowrap;
+}
+#detail-table-wrap td {
+  padding:4px 7px; border-bottom:1px solid var(--border-light);
+  white-space:nowrap; cursor:pointer;
+  color: var(--text);
+}
+#detail-table-wrap tr:hover td { background: #F3F4F6; }
+#detail-table-wrap tr.selected td { background: var(--accent-light); }
+.table-status { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; }
+
+/* ===== Bottom Sequence View ===== */
+#seq-svg { width:100%; height:100%; }
+.seq-legend { display:flex; gap:14px; font-size:10px; color:var(--text-mid); }
+.seq-legend span { display:flex; align-items:center; gap:4px; }
+.seq-legend .swatch { width:12px; height:9px; display:inline-block; border-radius:2px; }
+
+/* Bottom panel mode buttons */
+.bottom-mode-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.bottom-mode-btn:hover { border-color: var(--accent); color: var(--text); }
+.bottom-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Projection mode buttons */
+.proj-mode-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.proj-mode-btn:hover { border-color: var(--accent); color: var(--text); }
+.proj-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ===== Tooltip ===== */
+#tooltip {
+  position:fixed;
+  background: rgba(255,255,255,0.97);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 11px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 9999;
+  max-width: 320px;
+  line-height: 1.6;
+  color: var(--text-strong);
+  box-shadow: var(--shadow-lg);
+}
+#tooltip .tt-row { display:flex; justify-content:space-between; gap:14px; }
+#tooltip .tt-label { color: var(--text-dim); font-size: 10px; }
+#tooltip .tt-val { font-weight: 600; }
+#tooltip .tt-match { color: var(--match); }
+#tooltip .tt-uncertain { color: var(--uncertain); }
+#tooltip .tt-mismatch { color: var(--mismatch); }
+
+/* ===== Evidence Panel ===== */
+#evidence-panel {
+  position: fixed;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 360px;
+  max-height: 72vh;
+  overflow-y: auto;
+  background: rgba(255,255,255,0.98);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 18px;
+  z-index: 9998;
+  display: none;
+  font-size: 12px;
+  line-height: 1.7;
+  box-shadow: var(--shadow-lg);
+}
+#evidence-panel.visible { display:block; }
+#evidence-panel .ev-close {
+  position:absolute; top:10px; right:14px;
+  cursor:pointer; color:var(--text-dim); font-size:18px;
+  line-height:1;
+}
+#evidence-panel .ev-close:hover { color: var(--text-strong); }
+#evidence-panel .ev-section { margin-bottom:12px; }
+#evidence-panel .ev-section-title {
+  color:var(--text-dim); font-size:9px; text-transform:uppercase;
+  letter-spacing:1px; margin-bottom:4px; font-weight:600;
+}
+#evidence-panel .coherence-card {
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:8px;
+  background:rgba(249,250,251,0.92);
+}
+#evidence-panel .coherence-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  margin-bottom:8px;
+}
+#evidence-panel .coherence-status {
+  font-size:10px;
+  font-weight:700;
+  padding:2px 7px;
+  border-radius:10px;
+  border:1px solid var(--border);
+  background:#fff;
+  color:var(--text-mid);
+}
+#evidence-panel .coherence-grid {
+  display:grid;
+  grid-template-columns:58px 1fr;
+  gap:8px;
+  align-items:center;
+}
+#evidence-panel .coherence-metrics {
+  display:grid;
+  gap:4px;
+}
+#evidence-panel .coh-row {
+  display:grid;
+  grid-template-columns:42px 1fr 34px;
+  gap:5px;
+  align-items:center;
+  font-size:10px;
+}
+#evidence-panel .coh-bar {
+  height:6px;
+  border-radius:4px;
+  background:var(--border);
+  overflow:hidden;
+}
+#evidence-panel .coh-bar > span {
+  display:block;
+  height:100%;
+  border-radius:4px;
+}
+#evidence-panel .quality-flags {
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  margin-top:8px;
+}
+#evidence-panel .quality-chip {
+  font-size:9px;
+  line-height:1.3;
+  padding:2px 6px;
+  border-radius:10px;
+  border:1px solid var(--border);
+  background:#fff;
+  color:var(--text-mid);
+}
+#evidence-panel .observation-card {
+  margin-top:8px;
+  padding:6px;
+  border-left:3px solid var(--uncertain);
+  background:#fff;
+  font-size:10px;
+  color:var(--text-mid);
+}
+
+/* ===== Loading Spinner ===== */
+.spinner-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.6);
+  z-index: 10;
+  pointer-events: none;
+}
+.spinner {
+  width: 28px; height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ===== ABLATION VIEW ===== */
+#ablation-toggle {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: border-color 0.15s;
+}
+#ablation-toggle:hover { border-color: var(--accent); }
+#ablation-view { display:none; }
+.ablation-bar { cursor:pointer; transition:opacity 0.15s; }
+.ablation-bar:hover { opacity:0.7; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width:5px; height:5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* Glyph breathing animation for selected */
+@keyframes breathe {
+  0%, 100% { stroke-width: 1.5; }
+  50%      { stroke-width: 3; }
+}
+.glyph.selected circle:first-child {
+  animation: breathe 2s ease-in-out infinite;
+  stroke: var(--text-strong) !important;
+}
+
+/* Brush handle styling */
+.selection { fill: rgba(59,130,246,0.08); stroke: var(--accent); stroke-width:1; }
+.handle { fill: #fff; stroke: var(--accent); stroke-width:1.5; }
+</style>
+</head>
+<body>
+
+<div id="dashboard">
+
+  <!-- LEFT: Case List + Video -->
+  <div id="panel-left" class="panel">
+    <div class="panel-header">Cases</div>
+    <div id="case-list"></div>
+    <div id="video-section">
+      <video id="video-player" preload="metadata" playsinline></video>
+      <div class="video-controls">
+        <select id="video-select">
+          <option value="overlay">Overlay</option>
+          <option value="pose_demo">Pose Demo</option>
+        </select>
+        <button class="btn-play" id="btn-play" title="Play / Pause">&#9654; Play</button>
+      </div>
+      <div id="video-status" class="video-status"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: Projection View -->
+  <div id="panel-proj" class="panel">
+    <div class="panel-header">
+      Projection View
+      <div class="proj-controls">
+        <button class="proj-mode-btn active" id="btn-mode-points">Points</button>
+        <button class="proj-mode-btn" id="btn-mode-glyphs">Glyphs</button>
+        <select id="proj-method">
+          <option value="pca" selected>PCA</option>
+          <option value="mds">MDS</option>
+          <option value="tsne">t-SNE</option>
+        </select>
+        <select id="proj-unit">
+          <option value="event" selected>Events</option>
+          <option value="student">Students</option>
+        </select>
+        <button id="ablation-toggle">SR Ablation</button>
+        <button id="btn-clear-selection" style="display:none;">Clear Selection</button>
+      </div>
+      <div class="proj-legend">
+        <span><span class="legend-dot" style="background:var(--match)"></span> Match</span>
+        <span><span class="legend-dot" style="background:var(--uncertain)"></span> Uncertain</span>
+        <span><span class="legend-dot" style="background:var(--mismatch)"></span> Mismatch</span>
+      </div>
+    </div>
+    <div id="summary-strip">
+      <div class="summary-chip contract-OK"><span class="label">Contract</span><span class="value" id="chip-contract">–</span></div>
+      <div class="summary-chip"><span class="label">Students</span><span class="value" id="chip-students">–</span></div>
+      <div class="summary-chip"><span class="label">Verified</span><span class="value" id="chip-verified">–</span></div>
+      <div class="summary-chip"><span class="label">Match</span><span class="value" id="chip-match">–</span></div>
+      <div class="summary-chip"><span class="label">Unc / Mis</span><span class="value" id="chip-uncertain">–</span></div>
+    </div>
+    <div class="panel-body" id="proj-body"><svg id="proj-svg"></svg><div class="spinner-overlay" id="proj-spinner"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- RIGHT: Detail View -->
+  <div id="panel-detail" class="panel">
+    <div class="panel-header">
+      Detail View
+      <span style="font-size:9px;color:var(--text-dim);font-weight:400;letter-spacing:0.3px">Parallel Coordinates</span>
+    </div>
+    <div class="panel-body" style="display:flex;flex-direction:column;">
+      <div style="flex:1;min-height:0;position:relative;" id="pcp-body">
+        <svg id="pcp-svg"></svg>
+        <div class="spinner-overlay" id="pcp-spinner"><div class="spinner"></div></div>
+      </div>
+      <div id="detail-table-wrap">
+        <table><thead id="detail-table-head"></thead><tbody id="detail-table-body"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: Sequential Frames View (multi-mode) -->
+  <div id="panel-bottom" class="panel">
+    <div class="panel-header">
+      <span id="bottom-title">Sequential Frames View</span>
+      <div style="display:flex;gap:4px;">
+        <button class="bottom-mode-btn active" data-mode="score" id="btn-mode-score">Score View</button>
+        <button class="bottom-mode-btn" data-mode="timeline" id="btn-mode-timeline">Timeline View</button>
+        <button class="bottom-mode-btn" data-mode="multimodal" id="btn-mode-multimodal">Multimodal View</button>
+      </div>
+    </div>
+    <div class="panel-body" id="seq-body"><svg id="seq-svg"></svg><div class="spinner-overlay" id="seq-spinner"><div class="spinner"></div></div></div>
+    <div id="seq-empty" style="display:none;padding:24px;text-align:center;color:var(--text-dim);font-size:11px;">
+      No timeline data available for this case.
+    </div>
+  </div>
+
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<!-- Evidence Panel -->
+<div id="evidence-panel">
+  <span class="ev-close" id="ev-close">&times;</span>
+  <div id="evidence-content"></div>
+</div>
+
+<!-- ABLATION overlay -->
+<div id="ablation-view" style="grid-area:proj;background:var(--panel-bg);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:auto;flex-direction:column;display:none;">
+  <div class="panel-header">
+    SR Ablation Comparison
+    <button id="ablation-back" style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font-ui);font-size:10px;padding:3px 10px;border-radius:4px;cursor:pointer;">&larr; Back</button>
+  </div>
+  <div style="display:flex;flex:1;min-height:0;">
+    <div style="flex:1;min-width:0;"><svg id="ablation-bar-svg"></svg></div>
+    <div style="width:370px;overflow-y:auto;padding:14px;border-left:1px solid var(--border-light);" id="ablation-detail-panel"></div>
+  </div>
+</div>
+
+<script src="/docs/vendor/d3/d3.v7.min.js"></script>
+<script>
+// ====================================================================
+// GLOBAL STATE
+// ====================================================================
+const ST = {
+  cases: [],
+  activeCaseId: null,
+  caseData: null,
+  timelineSegments: [],
+  verifiedEvents: [],
+  featureRows: [],
+  sequenceSeries: [],
+  projectionPoints: [],
+  transcript: [],
+  brushExtent: [0, Infinity],
+  currentTime: 0,
+  selectedEventId: null,
+  hoveredEventId: null,
+  ablationData: null,
+  showAblation: false,
+  isPlaying: false,
+  videoSources: [],
+  videoSourceIndex: 0,
+
+  // ── Selection state ──
+  selectedIds: new Set(),
+  projectionMode: "points",
+  bottomViewMode: "score",
+  lassoPolygon: null,
+  clusterData: [],
+  timelineData: null,
+  _clusterLoadToken: 0,
+
+  // Colorblind-safe palette (Wong 2011 + adjustments)
+  statusColor: d3.scaleOrdinal()
+    .domain(["match","uncertain","mismatch","unverified"])
+    .range(["#059669","#D97706","#DC2626","#9CA3AF"]),
+
+  behaviorColor: d3.scaleOrdinal()
+    .domain(["listen","read","raise_hand","write","discuss","phone","doze","stand","distract","chat","note","unknown"])
+    .range(["#009E73","#E69F00","#56B4E9","#0072B2","#CC79A7","#D55E00","#F0E442","#00CED1","#FF6347","#9370DB","#3CB371","#999999"]),
+};
+
+// ── Unified stable ID ──
+const FEATURE_COLORS = {
+  c_vis: "#4C78A8",
+  c_txt: "#B279A2",
+  align_score: "#59A14F",
+  uq: "#F28E2B",
+  score_model: "#7F8DA9",
+};
+
+function getStableId(d) {
+  return d?.id
+    || d?.segment_id
+    || d?.event_id
+    || d?.alignment_id
+    || d?.point_id
+    || d?.query_id
+    || (d?.frame != null ? `frame_${String(d.frame).padStart(6, "0")}` : null)
+    || `${(typeof d?.t_center === 'number' ? d.t_center.toFixed(2) : '0')}_trk${d?.track_id ?? '?'}_${d?.behavior_code ?? ''}`;
+}
+
+function normalizeStableId(item) {
+  if (item == null) return null;
+  if (typeof item === "string" || typeof item === "number") return String(item);
+  return getStableId(item);
+}
+
+function getAlignScore(d) {
+  // Priority chain for alignment score
+  const v = d?.align_score
+    ?? d?.alignment_score
+    ?? d?.verified_p_match
+    ?? d?.p_match
+    ?? d?.c_align
+    ?? (d?.c_visual != null && d?.c_text != null ? d.c_visual * d.c_text : null)
+    ?? 0.5;
+  return Math.max(0, Math.min(1, +v || 0));
+}
+
+function getAlignSource(d) {
+  if (d?.align_score != null) return "align_score";
+  if (d?.alignment_score != null) return "alignment_score";
+  if (d?.verified_p_match != null) return "verified_p_match";
+  if (d?.p_match != null) return "p_match";
+  if (d?.c_align != null) return "c_align";
+  return "fallback";
+}
+
+// ── Selection utilities ──
+function updateSelection(ids) {
+  const normalized = (ids || []).map(normalizeStableId).filter(Boolean);
+  ST.selectedIds = new Set(normalized);
+  if (!normalized.length) {
+    ST.selectedEventId = null;
+  } else if (!ST.selectedEventId || !ST.selectedIds.has(ST.selectedEventId)) {
+    ST.selectedEventId = normalized[0];
+  }
+  ST.lassoPolygon = null;
+  refreshAllViews();
+}
+function clearSelection() {
+  ST.selectedIds = new Set();
+  ST.lassoPolygon = null;
+  ST.selectedEventId = null;
+  refreshAllViews();
+  updateDetailTableSelection(null);
+}
+function isSelected(d) { return ST.selectedIds.has(getStableId(d)); }
+function hasSelection() { return ST.selectedIds.size > 0; }
+function getSelectedPoints() {
+  if (!hasSelection()) return ST.projectionPoints;
+  return ST.projectionPoints.filter(p => ST.selectedIds.has(getStableId(p)));
+}
+function refreshAllViews() {
+  if (ST.showAblation) return;
+  renderProjection();
+  renderParallelCoordinates();
+  renderBottomView();
+  renderDetailTable();
+  updateSummaryChipsWithSelection();
+}
+
+// ── Timeline data loading ──
+async function loadTimelineData() {
+  const token = (ST._timelineLoadToken = (ST._timelineLoadToken || 0) + 1);
+  try {
+    const resp = await api(`/api/v2/vsumvis/timeline/${ST.activeCaseId}`);
+    if (token !== ST._timelineLoadToken) return;
+    ST.timelineData = resp.data || resp;
+    console.log("[vsumvis] timeline source = api");
+    if (!ST.showAblation && ST.bottomViewMode !== "score") renderBottomView();
+  } catch (err) {
+    if (token !== ST._timelineLoadToken) return;
+    console.warn("[vsumvis] timeline source = fallback (" + (err.message || err) + ")");
+    ST.timelineData = null;
+  }
+}
+
+// ── Cluster data loading ──
+async function loadClusterData() {
+  const token = ++ST._clusterLoadToken;
+  try {
+    const resp = await api(`/api/v2/vsumvis/clusters/${ST.activeCaseId}`);
+    if (token !== ST._clusterLoadToken) return;
+    ST.clusterData = resp.clusters || [];
+    console.log("[vsumvis] cluster source = api (" + ST.clusterData.length + " clusters)");
+    if (!ST.showAblation && ST.projectionMode === "glyphs") renderProjection();
+  } catch (err) {
+    if (token !== ST._clusterLoadToken) return;
+    console.warn("[vsumvis] cluster source = fallback (" + (err.message || err) + ")");
+    ST.clusterData = _buildClustersFromProjection();
+    if (!ST.showAblation && ST.projectionMode === "glyphs") renderProjection();
+  }
+}
+
+// ====================================================================
+// UTILITY: Debounce & Throttle
+// ====================================================================
+function debounce(fn, ms) {
+  let timer;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), ms);
+  };
+}
+function throttle(fn, ms) {
+  let last = 0;
+  return function(...args) {
+    const now = Date.now();
+    if (now - last >= ms) { last = now; fn.apply(this, args); }
+  };
+}
+
+// ====================================================================
+// UTILITY: Show/Hide spinner
+// ====================================================================
+function showSpinner(id) { const el = document.getElementById(id); if (el) el.style.display = 'flex'; }
+function hideSpinner(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
+
+// ====================================================================
+// API
+// ====================================================================
+async function api(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json();
+}
+
+// ====================================================================
+// INIT
+// ====================================================================
+async function init() {
+  try {
+    const casesResp = await api("/api/v2/vsumvis/cases");
+    ST.cases = casesResp.cases || [];
+    renderCaseList();
+    // Default selection: front_45618_full > any front* full > any full > first
+    let defaultCase =
+      ST.cases.find(c => c.case_id === 'front_45618_full') ||
+      ST.cases.find(c => c.case_id && c.case_id.startsWith('front_') && c.kind === 'full') ||
+      ST.cases.find(c => c.kind === 'full') ||
+      ST.cases.find(c => c.kind === 'sr_ablation') ||
+      ST.cases[0];
+    if (defaultCase) await selectCase(defaultCase.case_id);
+  } catch (err) {
+    console.error("Init failed:", err);
+    document.getElementById("case-list").innerHTML =
+      `<div style="padding:24px;color:var(--mismatch);font-size:12px;">Failed to load cases.<br><span style="color:var(--text-dim);font-size:10px;">${err.message}</span></div>`;
+  }
+}
+
+// ====================================================================
+// CASE LIST
+// ====================================================================
+function renderCaseList() {
+  const container = document.getElementById("case-list");
+  const dsLabels = { codex_reports: 'codex_reports', frontend_bundle: 'frontend_bundle', raw_output: 'raw_output' };
+  const dsColors = { codex_reports: '#DBEAFE', frontend_bundle: '#FEF3C7', raw_output: '#F3F4F6' };
+  container.innerHTML = ST.cases.map(c => {
+    const sparkPath = (c.sparkline && c.sparkline.length > 0)
+      ? sparklineSVG(c.sparkline, 248, 22) : "";
+    const isSR = c.kind === 'sr_ablation';
+    const ds = c.data_source || 'raw_output';
+    return `
+    <div class="case-item${c.case_id === ST.activeCaseId ? ' active' : ''}"
+         data-case-id="${c.case_id}" onclick="selectCase('${c.case_id}')">
+      <div class="case-name">${c.label || c.case_id}</div>
+      <div class="case-tags">
+        <span class="tag ${isSR?'tag-sr':'tag-full'}">${isSR ? 'SR Ablation' : 'Full'}</span>
+        <span class="tag" style="background:${c.contract_status==='OK'?'#D1FAE5':'#FEF3C7'};color:${c.contract_status==='OK'?'#059669':'#D97706'}">Contract ${c.contract_status}</span>
+        <span class="tag" style="background:${dsColors[ds]||'#F3F4F6'};color:#6B7280;">${dsLabels[ds]||ds}</span>
+      </div>
+      <div class="case-meta">
+        <span>${c.student_count} students</span>
+        <span>${c.event_count||0} events</span>
+        <span>${(c.duration_sec||0).toFixed(0)}s</span>
+        ${c.match_rate ? `<span>${c.match_rate.match_pct}% match</span>` : ''}
+      </div>
+      ${sparkPath ? `<div class="case-sparkline">${sparkPath}</div>` : ''}
+    </div>`;
+  }).join("");
+}
+
+function sparklineSVG(data, w, h) {
+  if (!data || data.length < 2) return "";
+  const max = d3.max(data, d => d.count) || 1;
+  const xs = d3.scaleLinear().domain([0, data.length-1]).range([0, w]);
+  const ys = d3.scaleLinear().domain([0, max]).range([h, 0]);
+  const area = d3.area().x((d,i) => xs(i)).y0(h).y1(d => ys(d.count)).curve(d3.curveMonotoneX);
+  const path = area(data);
+  return `<svg width="${w}" height="${h}" style="display:block"><path d="${path}" fill="var(--accent-light)" stroke="none"/></svg>`;
+}
+
+// ====================================================================
+// CASE SELECTION
+// ====================================================================
+async function selectCase(caseId) {
+  const requestToken = (ST._caseLoadToken = (ST._caseLoadToken || 0) + 1);
+  ST.activeCaseId = caseId;
+  ST.selectedEventId = null;
+  ST.hoveredEventId = null;
+  ST.brushExtent = [0, Infinity];
+  ST.selectedIds = new Set();
+  ST.lassoPolygon = null;
+  ST.clusterData = [];
+  renderCaseList();
+
+  showSpinner('proj-spinner');
+  showSpinner('pcp-spinner');
+  showSpinner('seq-spinner');
+
+  try {
+    const resp = await api(`/api/v2/vsumvis/case/${caseId}`);
+    if (requestToken !== ST._caseLoadToken) return;
+    ST.caseData = resp.data;
+    ST.timelineSegments = resp.data.timeline_segments || [];
+    ST.verifiedEvents = resp.data.verified_events || [];
+    ST.featureRows = resp.data.feature_rows || [];
+    ST.sequenceSeries = resp.data.sequence_series || [];
+    ST.projectionPoints = resp.data.projection_points || [];
+    ST.transcript = resp.data.transcript || [];
+    ST.ablationData = resp.data.ablation_summary || null;
+
+    updateSummaryChips(resp.data.case_info);
+    await updateVideoSource();
+    if (requestToken !== ST._caseLoadToken) return;
+
+    // Load timeline + cluster data in parallel (non-blocking)
+    loadTimelineData();
+    loadClusterData();
+    if (requestToken !== ST._caseLoadToken) return;
+
+    if (!ST.showAblation) {
+      // Use requestAnimationFrame to let spinners render before heavy D3 work
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          renderProjection();
+          renderParallelCoordinates();
+          renderBottomView();
+          renderDetailTable();
+          hideSpinner('proj-spinner');
+          hideSpinner('pcp-spinner');
+          hideSpinner('seq-spinner');
+        });
+      });
+    }
+  } catch (err) {
+    if (requestToken !== ST._caseLoadToken) return;
+    console.error("selectCase failed:", err);
+    hideSpinner('proj-spinner');
+    hideSpinner('pcp-spinner');
+    hideSpinner('seq-spinner');
+  }
+}
+
+function updateSummaryChips(info) {
+  const ci = info || {};
+  document.getElementById("chip-contract").textContent = ci.contract_status || "–";
+  document.getElementById("chip-contract").parentElement.className =
+    `summary-chip contract-${ci.contract_status || 'WARN'}`;
+  document.getElementById("chip-students").textContent = ci.student_count ?? "–";
+  document.getElementById("chip-verified").textContent = ci.verified_event_count ?? "–";
+  const ms = ci.match_summary || {};
+  document.getElementById("chip-match").textContent = ms.match_rate != null ? `${ms.match_rate}%` : "–";
+  document.getElementById("chip-uncertain").textContent =
+    `${ms.uncertain_rate != null ? ms.uncertain_rate + '%' : '–'} / ${ms.mismatch_rate != null ? ms.mismatch_rate + '%' : '–'}`;
+}
+
+function setVideoStatus(message, kind = "") {
+  const el = document.getElementById("video-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.className = `video-status ${kind || ""}`.trim();
+}
+
+function uniqueVideoSources(items) {
+  const seen = new Set();
+  return items.filter(item => {
+    if (!item || !item.url) return false;
+    if (seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
+}
+
+async function updateVideoSource() {
+  const caseId = ST.activeCaseId;
+  const assets = ST.caseData?.assets || {};
+  const sel = document.getElementById("video-select");
+  const vid = document.getElementById("video-player");
+  const preferred = sel?.value || "overlay";
+  const requestToken = ST._caseLoadToken || 0;
+
+  const localCandidates = preferred === "pose_demo"
+    ? [
+        { key: "pose_demo", label: "Pose Demo", url: assets.pose_demo_video },
+        { key: "overlay", label: "Overlay", url: assets.overlay_video },
+      ]
+    : [
+        { key: "overlay", label: "Overlay", url: assets.overlay_video },
+        { key: "pose_demo", label: "Pose Demo", url: assets.pose_demo_video },
+      ];
+
+  let apiCandidates = [];
+  try {
+    const media = await api(`/api/media/${encodeURIComponent(caseId)}`);
+    if (requestToken !== (ST._caseLoadToken || 0) || caseId !== ST.activeCaseId) return;
+    apiCandidates = [
+      { key: "overlay_api", label: "Overlay (api)", url: media.browser_overlay || media.overlay },
+      { key: "original", label: "Original", url: media.browser_original || media.original },
+      { key: "pose_demo_api", label: "Pose Demo (api)", url: media.browser_pose_demo || media.pose_demo },
+    ];
+  } catch (err) {
+    console.warn("media fallback unavailable:", err);
+  }
+
+  if (requestToken !== (ST._caseLoadToken || 0) || caseId !== ST.activeCaseId) return;
+
+  ST.videoSources = uniqueVideoSources([...localCandidates, ...apiCandidates]);
+  ST.videoSourceIndex = 0;
+  ST._videoSourceGeneration = (ST._videoSourceGeneration || 0) + 1;
+  ST._activeVideoGeneration = ST._videoSourceGeneration;
+
+  if (!ST.videoSources.length) {
+    vid.pause();
+    vid.removeAttribute("src");
+    vid.load();
+    document.getElementById("btn-play").textContent = "▶ Play";
+    ST.isPlaying = false;
+    setVideoStatus("No playable video source for this case.", "warn");
+    return;
+  }
+
+  const chosen = ST.videoSources[ST.videoSourceIndex];
+  vid.pause();
+  vid.removeAttribute("src");
+  vid.load();
+  vid.src = chosen.url;
+  vid.load();
+  document.getElementById("btn-play").textContent = "▶ Play";
+  ST.isPlaying = false;
+  setVideoStatus(`Video source: ${chosen.label}`, "");
+}
+
+function advanceVideoSource(reason, failedGeneration, autoplay = false) {
+  const vid = document.getElementById("video-player");
+  const activeGeneration = ST._activeVideoGeneration || 0;
+  if (failedGeneration != null && failedGeneration !== activeGeneration) {
+    return false;
+  }
+  if (ST.videoSourceIndex + 1 < ST.videoSources.length) {
+    ST.videoSourceIndex += 1;
+    ST._videoSourceGeneration = (ST._videoSourceGeneration || 0) + 1;
+    ST._activeVideoGeneration = ST._videoSourceGeneration;
+    const next = ST.videoSources[ST.videoSourceIndex];
+    vid.pause();
+    vid.removeAttribute("src");
+    vid.load();
+    vid.src = next.url;
+    vid.load();
+    setVideoStatus(`Video fallback: ${next.label}`, "warn");
+    if (autoplay) {
+      vid.play().then(() => {
+        ST.isPlaying = true;
+        document.getElementById("btn-play").innerHTML = "⏸ Pause";
+      }).catch(err => {
+        console.error("video fallback play failed:", err);
+        if (!advanceVideoSource(err?.message || "Video fallback failed.", ST._activeVideoGeneration || 0, true)) {
+          setVideoStatus(err?.message || "Video fallback failed.", "error");
+        }
+      });
+    }
+    return true;
+  }
+  setVideoStatus(reason || "The current browser cannot play this video source.", "error");
+  document.getElementById("btn-play").textContent = "▶ Play";
+  ST.isPlaying = false;
+  return false;
+}
+
+document.getElementById("video-select").addEventListener("change", updateVideoSource);
+
+// ====================================================================
+// PLAY/PAUSE (linked to bottom scrubber)
+// ====================================================================
+document.getElementById("btn-play").addEventListener("click", () => {
+  const vid = document.getElementById("video-player");
+  if (!vid || !vid.src) return;
+  if (vid.paused) {
+    vid.play().then(() => {
+      ST.isPlaying = true;
+      document.getElementById("btn-play").innerHTML = "⏸ Pause";
+      setVideoStatus(`Playing ${document.getElementById("video-select").value}`, "");
+    }).catch(err => {
+      console.error("video play failed:", err);
+      if (!advanceVideoSource(err?.message || "Video play failed.", ST._activeVideoGeneration || 0, true)) {
+        setVideoStatus(err?.message || "Video play failed.", "error");
+      }
+    });
+  } else {
+    vid.pause();
+    ST.isPlaying = false;
+    document.getElementById("btn-play").innerHTML = "▶ Play";
+  }
+});
+
+// ====================================================================
+// PROJECTION VIEW (Glyph scatter + zoom + force-collide)
+// ====================================================================
+function renderProjection() {
+  const clearBtn = document.getElementById("btn-clear-selection");
+  if (clearBtn) clearBtn.style.display = hasSelection() ? "" : "none";
+
+  if (ST.projectionMode === "glyphs") {
+    renderGlyphProjection();
+    return;
+  }
+  renderPointsProjection();
+}
+
+function renderPointsProjection() {
+  const container = document.getElementById("proj-svg").parentElement;
+  const W = container.clientWidth || 600;
+  const H = container.clientHeight || 400;
+
+  const svg = d3.select("#proj-svg");
+  svg.selectAll("*").remove();
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("width", W).attr("height", H);
+
+  const points = ST.projectionPoints;
+  if (!points || points.length === 0) {
+    svg.append("text").attr("x", W/2).attr("y", H/2)
+      .attr("text-anchor","middle").attr("fill","var(--text-dim)").style("font-size","11px").text("No projection data");
+    return;
+  }
+
+  const margin = {top:18, right:18, bottom:28, left:28};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+
+  const xExt = d3.extent(points, d => d.x);
+  const yExt = d3.extent(points, d => d.y);
+  const xScale = d3.scaleLinear()
+    .domain([(xExt[0]||0)-0.03, (xExt[1]||1)+0.03]).range([0, iW]);
+  const yScale = d3.scaleLinear()
+    .domain([(yExt[0]||0)-0.03, (yExt[1]||1)+0.03]).range([iH, 0]);
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // ── NOTE: Zoom disabled to avoid lasso coordinate mismatch.
+  // Both lasso points and dot positions live in g's untransformed coordinate system.
+  // ── Lasso state ──
+  let lassoPoints = [];
+  let isLassoing = false;
+  const lassoPath = g.append("path").attr("fill", "rgba(59,130,246,0.08)").attr("stroke", "#3B82F6").attr("stroke-width", 1.5).attr("stroke-dasharray", "4,2").attr("pointer-events", "none").style("display", "none");
+  const lassoLine = g.append("path").attr("fill", "none").attr("stroke", "#3B82F6").attr("stroke-width", 1.2).attr("pointer-events", "none").style("display", "none");
+
+  // ── Scatter points (simple dots) ──
+  const sample = points.length > 3000 ? points.slice(0, 3000) : points;
+  const scaledPts = sample.map(p => ({...p, _x: xScale(p.x), _y: yScale(p.y)}));
+
+  // Sim jitter for anti-collision on small datasets
+  if (scaledPts.length > 1 && scaledPts.length < 3000) {
+    const sim = d3.forceSimulation(scaledPts)
+      .alphaDecay(0.04).velocityDecay(0.35)
+      .force("x", d3.forceX(d => d._x).strength(0.4))
+      .force("y", d3.forceY(d => d._y).strength(0.4))
+      .force("collide", d3.forceCollide(6))
+      .stop();
+    for (let i = 0; i < 80; i++) sim.tick();
+  }
+
+  const dotR = 4.5;
+  const dots = g.selectAll("circle.proj-dot")
+    .data(scaledPts)
+    .join("circle")
+    .attr("class", "proj-dot")
+    .attr("cx", d => d._x).attr("cy", d => d._y)
+    .attr("r", d => {
+      const sel = isSelected(d);
+      const sv = getStableId(d) === ST.selectedEventId;
+      return sel || sv ? dotR + 2 : dotR;
+    })
+    .attr("fill", d => {
+      if (hasSelection()) {
+        return isSelected(d) ? ST.statusColor(d.verification_status) : "#E5E7EB";
+      }
+      return ST.statusColor(d.verification_status);
+    })
+    .attr("fill-opacity", d => {
+      if (hasSelection()) return isSelected(d) ? 0.9 : 0.15;
+      return 0.55;
+    })
+    .attr("stroke", d => isSelected(d) ? "var(--text-strong)" : "none")
+    .attr("stroke-width", d => isSelected(d) ? 1.2 : 0)
+    .style("cursor", "pointer")
+    .on("mouseover", function(ev, d) {
+      ST.hoveredEventId = getStableId(d);
+      showTooltip(ev, d);
+      highlightLinked(getStableId(d), d.track_id);
+    })
+    .on("mouseout", function() {
+      ST.hoveredEventId = null;
+      hideTooltip();
+      clearHighlight();
+    })
+    .on("click", function(ev, d) {
+      // Distinguish click from lasso drag
+      if (ST._lassoClickBlock) { ST._lassoClickBlock = false; return; }
+      ST.selectedEventId = getStableId(d);
+      seekVideo(d.t_center);
+      showEvidencePanel(d);
+      updateSelection([d]);
+      updateDetailTableSelection(getStableId(d));
+    });
+
+  // ── Lasso drawing ──
+  svg.on("mousedown.lasso", function(ev) {
+    if (ev.shiftKey || ev.ctrlKey) return; // allow pan/zoom
+    if (ev.target && ev.target.closest && ev.target.closest(".proj-glyph-g")) return;
+    const [mx, my] = d3.pointer(ev, g.node());
+    if (mx < 0 || mx > iW || my < 0 || my > iH) return;
+    isLassoing = true;
+    lassoPoints = [[mx, my]];
+    lassoLine.style("display", "").attr("d", d3.line()(lassoPoints));
+    lassoPath.style("display", "none");
+  });
+
+  svg.on("mousemove.lasso", function(ev) {
+    if (!isLassoing) return;
+    const [mx, my] = d3.pointer(ev, g.node());
+    lassoPoints.push([mx, my]);
+    lassoLine.attr("d", d3.line().curve(d3.curveLinear)(lassoPoints));
+    // Live polygon to preview
+    if (lassoPoints.length > 2) {
+      lassoPath.style("display", "").attr("d", "M" + lassoPoints.map(p => p.join(",")).join("L") + "Z");
+    }
+  });
+
+  svg.on("mouseup.lasso", function(ev) {
+    if (!isLassoing) return;
+    isLassoing = false;
+    lassoLine.style("display", "none");
+    lassoPath.style("display", "none");
+
+    // Block immediate click on mouseup
+    ST._lassoClickBlock = lassoPoints.length > 3;
+
+    if (lassoPoints.length < 3) {
+      lassoPoints = [];
+      return;
+    }
+    // Close polygon
+    const poly = lassoPoints.map(p => [p[0], p[1]]);
+    ST.lassoPolygon = poly;
+
+    // Which points are inside?
+    const selected = [];
+    for (const pt of scaledPts) {
+      if (d3.polygonContains(poly, [pt._x, pt._y])) {
+        selected.push(pt);
+      }
+    }
+    if (selected.length > 0) {
+      updateSelection(selected);
+    }
+    lassoPoints = [];
+  });
+
+  // Axes
+  g.append("g").attr("transform", `translate(0,${iH})`)
+    .call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.format(".2f")))
+    .selectAll("text").style("font-size","9px").attr("fill","var(--text-dim)");
+  g.append("g")
+    .call(d3.axisLeft(yScale).ticks(5).tickFormat(d3.format(".2f")))
+    .selectAll("text").style("font-size","9px").attr("fill","var(--text-dim)");
+}
+
+// ── GLYPH PROJECTION ──
+function renderGlyphProjection() {
+  const container = document.getElementById("proj-svg").parentElement;
+  const W = container.clientWidth || 600;
+  const H = container.clientHeight || 400;
+
+  const svg = d3.select("#proj-svg");
+  svg.selectAll("*").remove();
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("width", W).attr("height", H);
+
+  const points = ST.projectionPoints;
+  if (!points || points.length === 0) {
+    svg.append("text").attr("x", W/2).attr("y", H/2)
+      .attr("text-anchor","middle").attr("fill","var(--text-dim)").text("No projection data");
+    return;
+  }
+
+  let clusters = ST.clusterData;
+  if (!clusters || clusters.length === 0) {
+    clusters = _buildClustersFromProjection();
+    ST.clusterData = clusters;
+  }
+
+  const margin = {top:18, right:18, bottom:28, left:28};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+
+  const xExt = d3.extent(points, d => d.x);
+  const yExt = d3.extent(points, d => d.y);
+  const xScale = d3.scaleLinear().domain([(xExt[0]||0)-0.05, (xExt[1]||1)+0.05]).range([0, iW]);
+  const yScale = d3.scaleLinear().domain([(yExt[0]||0)-0.05, (yExt[1]||1)+0.05]).range([iH, 0]);
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Background points (very faint)
+  const sample = points.length > 2000 ? points.slice(0, 2000) : points;
+  g.selectAll("circle.glyph-bg")
+    .data(sample)
+    .join("circle")
+    .attr("class", "glyph-bg")
+    .attr("cx", d => xScale(d.x)).attr("cy", d => yScale(d.y))
+    .attr("r", 2)
+    .attr("fill", "#D1D5DB")
+    .attr("fill-opacity", 0.25);
+
+  // Glyph colors — use unified FEATURE_COLORS
+  const arcColors = FEATURE_COLORS;
+
+  // Anti-collision force on glyphs
+  const glyphNodes = clusters.map(c => ({
+    ...c, _x: xScale(c.x), _y: yScale(c.y),
+  }));
+  if (glyphNodes.length > 1) {
+    const sim = d3.forceSimulation(glyphNodes)
+      .alphaDecay(0.05).velocityDecay(0.4)
+      .force("x", d3.forceX(d => d._x).strength(0.3))
+      .force("y", d3.forceY(d => d._y).strength(0.3))
+      .force("collide", d3.forceCollide(32))
+      .stop();
+    for (let i = 0; i < 100; i++) sim.tick();
+  }
+
+  const maxSz = d3.max(clusters, c => c.size) || 1;
+  const rScale = d3.scaleSqrt().domain([1, maxSz]).range([14, 38]);
+
+  const glyphG = g.selectAll("g.proj-glyph-g")
+    .data(glyphNodes)
+    .join("g")
+    .attr("class", d => `proj-glyph-g${_isGlyphSelected(d) ? ' selected' : ''}`)
+    .attr("transform", d => `translate(${d._x},${d._y})`)
+    .style("cursor", "pointer")
+    .on("mouseover", function(ev, d) {
+      d3.select(this).select("circle.glyph-bg-circle")
+        .attr("stroke", "var(--text-strong)").attr("stroke-width", 2);
+      showGlyphTooltip(ev, d);
+    })
+    .on("mouseout", function() {
+      const sel = _isGlyphSelected(d);
+      d3.select(this).select("circle.glyph-bg-circle")
+        .attr("stroke", sel ? "var(--accent)" : "none")
+        .attr("stroke-width", sel ? 2.5 : 0);
+      hideTooltip();
+    })
+      .on("click", function(ev, d) {
+        const ids = (d.ids || []).slice(0, 100);
+        if (ids.length > 0) {
+          updateSelection(ids);
+          ST.selectedEventId = ids[0];
+          const pt = points.find(p => getStableId(p) === ids[0]);
+          if (pt) seekVideo(pt.t_center || 0);
+        }
+      });
+
+  // Background white circle
+  glyphG.append("circle")
+    .attr("class", "glyph-bg-circle")
+    .attr("r", d => rScale(d.size) + 1)
+    .attr("fill", "rgba(255,255,255,0.85)")
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 0.8);
+
+  // Arc rings — each feature a partial arc
+  const arcKeys = ["c_visual", "c_text", "align_score", "uq", "score_model"];
+  const arcGenerator = d3.arc();
+  for (let ai = 0; ai < arcKeys.length; ai++) {
+    const key = arcKeys[ai];
+    glyphG.append("path")
+      .attr("fill", "none")
+      .attr("stroke", arcColors[key] || "#ccc")
+      .attr("stroke-width", 3.5)
+      .attr("d", function(d) {
+        const r = rScale(d.size) + 5 + ai * 4;
+        const fm = d.feature_mean || {};
+        const val = key === "align_score" ? getAlignScore(fm) : (fm[key] || 0);
+        const angle = Math.max(0.05, Math.min(0.95, val || 0)) * Math.PI * 2;
+        return arcGenerator({
+          innerRadius: r, outerRadius: r + 2.5,
+          startAngle: (ai * Math.PI * 2) / arcKeys.length,
+          endAngle: (ai * Math.PI * 2) / arcKeys.length + angle,
+        });
+      });
+  }
+
+  // Center count number
+  glyphG.append("text")
+    .attr("text-anchor", "middle")
+    .attr("dy", "0.35em")
+    .attr("fill", "var(--text-strong)")
+    .style("font-size", d => Math.max(10, Math.min(16, rScale(d.size) * 0.55)) + "px")
+    .style("font-weight", "700")
+    .style("pointer-events", "none")
+    .text(d => d.size > 999 ? (d.size/1000).toFixed(1)+"k" : d.size);
+
+  // Glyph legend (top-right)
+  const legendG = g.append("g").attr("transform", `translate(${iW - 140}, ${-4})`);
+  for (let ai = 0; ai < arcKeys.length; ai++) {
+    legendG.append("rect")
+      .attr("x", 0).attr("y", ai * 14)
+      .attr("width", 10).attr("height", 10).attr("rx", 2)
+      .attr("fill", arcColors[arcKeys[ai]]);
+    legendG.append("text")
+      .attr("x", 14).attr("y", ai * 14 + 9)
+      .attr("fill", "var(--text-mid)").style("font-size", "8px")
+      .text(arcKeys[ai].replace("_", " ").toUpperCase());
+  }
+
+  // Axes
+  g.append("g").attr("transform", `translate(0,${iH})`)
+    .call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.format(".2f")))
+    .selectAll("text").style("font-size","9px").attr("fill","var(--text-dim)");
+  g.append("g")
+    .call(d3.axisLeft(yScale).ticks(5).tickFormat(d3.format(".2f")))
+    .selectAll("text").style("font-size","9px").attr("fill","var(--text-dim)");
+}
+
+function showGlyphTooltip(ev, d) {
+  const tip = document.getElementById("tooltip");
+  const fm = d.feature_mean || {};
+  const sr = d.status_ratio || {};
+  const topB = (d.top_behaviors || []).slice(0, 4).map(b => `${b[0]}(${b[1]})`).join(", ");
+  tip.innerHTML = `
+    <div class="tt-row"><span class="tt-label">Cluster</span><span>${d.cluster_id}</span></div>
+    <div class="tt-row"><span class="tt-label">Size</span><span>${d.size}</span></div>
+    <div class="tt-row"><span class="tt-label">C_VIS</span><span>${(fm.c_visual||0).toFixed(3)}</span></div>
+    <div class="tt-row"><span class="tt-label">C_TXT</span><span>${(fm.c_text||0).toFixed(3)}</span></div>
+    <div class="tt-row"><span class="tt-label">ALIGN</span><span>${getAlignScore(fm).toFixed(3)}${getAlignSource(fm) === 'fallback' ? ' (est.)' : ''}</span></div>
+    <div class="tt-row"><span class="tt-label">UQ</span><span>${(fm.uq||0).toFixed(3)}</span></div>
+    <div class="tt-row"><span class="tt-label">Match</span><span class="tt-match">${((sr.match||0)*100).toFixed(0)}%</span></div>
+    <div class="tt-row"><span class="tt-label">Unc / Mis</span><span>${((sr.uncertain||0)*100).toFixed(0)}% / ${((sr.mismatch||0)*100).toFixed(0)}%</span></div>
+    ${topB ? `<div class="tt-row"><span class="tt-label">Top</span><span style="font-size:9px;">${topB}</span></div>` : ''}`;
+  tip.style.left = (ev.clientX + 18) + "px";
+  tip.style.top  = (ev.clientY - 8) + "px";
+  tip.style.opacity = 1;
+}
+
+function updateProjectionSelection() {
+  d3.selectAll(".proj-glyph-g, .proj-dot")
+    .classed("selected", d => getStableId(d) === ST.selectedEventId);
+}
+
+function highlightLinked(eventId, trackId) {
+  d3.selectAll(".proj-glyph-g, .proj-dot").transition().duration(100)
+    .attr("opacity", d => (getStableId(d) === eventId || d.track_id === trackId) ? 1 : 0.10);
+}
+
+function clearHighlight() {
+  d3.selectAll(".proj-glyph-g, .proj-dot").transition().duration(100).attr("opacity", 1);
+}
+
+// ====================================================================
+// PARALLEL COORDINATES (with debounced brush)
+// ====================================================================
+// ====================================================================
+// PARALLEL COORDINATES — configurable dimension order (drag-to-reorder)
+// ====================================================================
+// Each entry: { key, label, type: "number" | "category" }
+// Drag an axis handle to reorder; brush per axis resets on reorder.
+let _pcpDimensionOrder = [
+  { key: "c_visual",          label: "c_vis",    type: "number" },
+  { key: "c_text",            label: "c_txt",    type: "number" },
+  { key: "uq_track",          label: "UQ",       type: "number" },
+  { key: "weight_v",          label: "w_V",      type: "number" },
+  { key: "weight_a",          label: "w_A",      type: "number" },
+  { key: "reliability_final", label: "Rel",      type: "number" },
+  { key: "p_match",           label: "P(Match)", type: "number" },
+];
+
+function _pcpAxisKeys() { return _pcpDimensionOrder.map(d => d.key); }
+function _pcpAxisLabel(key) { const c = _pcpDimensionOrder.find(d => d.key === key); return c ? c.label : key; }
+function _pcpAxisType(key)  { const c = _pcpDimensionOrder.find(d => d.key === key); return c ? c.type : "number"; }
+
+function renderParallelCoordinates() {
+  const container = document.getElementById("pcp-svg").parentElement;
+  const W = container.clientWidth || 370;
+  const H = container.clientHeight || 280;
+
+  const svg = d3.select("#pcp-svg");
+  svg.selectAll("*").remove();
+  svg
+    .attr("width", W).attr("height", H)
+    .attr("viewBox", `0 0 ${W} ${H}`)
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  const rows = ST.featureRows;
+  if (!rows || rows.length === 0) {
+    svg.append("text").attr("x", W/2).attr("y", H/2)
+      .attr("text-anchor","middle").attr("fill","var(--text-dim)").style("font-size","11px").text("No feature data");
+    return;
+  }
+
+  const margin = {top: 28, right: 36, bottom: 36, left: 36};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+
+  const axes = _pcpAxisKeys();
+  const xScale = d3.scalePoint().domain(axes).range([0, iW]).padding(0.4);
+
+  // Build yScales per axis — support both number and category types
+  const yScales = {};
+  for (const ax of axes) {
+    const axType = _pcpAxisType(ax);
+    if (axType === "category") {
+      const uniq = Array.from(new Set(rows.map(d => d[ax])))
+        .filter(v => v != null)
+        .sort();
+      yScales[ax] = d3.scalePoint()
+        .domain(uniq.length ? uniq : ["(none)"])
+        .range([iH, 0])
+        .padding(0.5);
+    } else {
+      const ext = d3.extent(rows, d => d[ax]);
+      yScales[ax] = d3.scaleLinear()
+        .domain([Math.max(0, (ext[0]||0)-0.03), Math.min(1, (ext[1]||1)+0.03)])
+        .range([iH, 0]).nice();
+    }
+  }
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const sample = rows.length > 1200 ? rows.slice(0, 1200) : rows;
+
+  // ── Polylines ──
+  const lineFn = d3.line().x(d => xScale(d.axis)).y(d => yScales[d.axis](d.value));
+
+  g.selectAll("path.pcp-line")
+    .data(sample)
+    .join("path")
+    .attr("class", "pcp-line")
+    .attr("d", d => lineFn(axes.map(ax => ({axis: ax, value: d[ax]}))))
+    .attr("fill", "none")
+    .attr("stroke", d => ST.statusColor(d.verification_status))
+    .attr("stroke-width", 0.5)
+    .attr("opacity", 0.28)
+    .on("mouseover", function(ev, d) {
+      d3.select(this).attr("opacity", 0.85).attr("stroke-width", 2);
+      ST.hoveredEventId = getStableId(d);
+      highlightLinked(getStableId(d), d.track_id);
+      showTooltip(ev, d);
+    })
+    .on("mouseout", function() {
+      d3.select(this).attr("opacity", 0.28).attr("stroke-width", 0.5);
+      ST.hoveredEventId = null;
+      hideTooltip();
+      clearHighlight();
+    })
+    .on("click", function(ev, d) {
+      ST.selectedEventId = getStableId(d);
+      seekVideo(d.t_center);
+      showEvidencePanel(d);
+      updateSelection([d]);
+      highlightLinked(getStableId(d), d.track_id);
+      updateDetailTableSelection(getStableId(d));
+    });
+
+  // Debounced global refresh after axis brush
+  const debouncedRefresh = debounce(() => {
+    renderParallelCoordinates();
+    renderProjection();
+    renderDetailTable();
+    renderBottomView();
+  }, 80);
+
+  // ── Drag behaviour for axis reordering ──
+  const axisDrag = d3.drag()
+    .on("start", function(ev, key) {
+      d3.select(this).classed("dragging", true).raise();
+    })
+    .on("drag", function(ev, key) {
+      // Compute temporary x positions based on mouse drag
+      const curX = Math.max(0, Math.min(iW, xScale(key) + ev.dx));
+      const tempPos = new Map(axes.map(k => [k, k === key ? curX : xScale(k)]));
+      const tempOrder = axes.slice().sort((a, b) => tempPos.get(a) - tempPos.get(b));
+      const tempScale = d3.scalePoint().domain(tempOrder).range([0, iW]).padding(0.4);
+
+      // Move axis groups
+      d3.select(this).attr("transform", `translate(${tempScale(key)},0)`);
+      g.selectAll("g.pcp-axis-group").each(function(k) {
+        if (k !== key) d3.select(this)
+          .transition().duration(80)
+          .attr("transform", `translate(${tempScale(k)},0)`);
+      });
+      // Move line handles (text + brush containers) during drag
+      g.selectAll("g.pcp-axis-brush").each(function(k) {
+        d3.select(this).attr("transform", `translate(${tempScale(k)-7},0)`);
+      });
+      g.selectAll("text.pcp-label").each(function(k) {
+        d3.select(this).attr("x", tempScale(k));
+      });
+    })
+    .on("end", function(ev, key) {
+      d3.select(this).classed("dragging", false);
+      const finalX = Math.max(0, Math.min(iW, xScale(key) + ev.dx));
+      const finalPos = new Map(axes.map(k => [k, k === key ? finalX : xScale(k)]));
+      const newOrder = axes.slice().sort((a, b) => finalPos.get(a) - finalPos.get(b));
+
+      // Update global dimension order
+      const dimMap = new Map(_pcpDimensionOrder.map(d => [d.key, d]));
+      _pcpDimensionOrder = newOrder.map(k => dimMap.get(k));
+
+      // Redraw with new order
+      renderParallelCoordinates();
+    });
+
+  // ── Draw axes, labels, and brushes ──
+  for (const ax of axes) {
+    // Axis group container — bind axis key as datum for drag callbacks
+    const axG = g.append("g")
+      .attr("class", "pcp-axis-group")
+      .datum(ax)
+      .attr("transform", `translate(${xScale(ax)},0)`)
+      .call(axisDrag);  // <— drag on the whole axis group
+
+    // Vertical axis line (used as drag target visual)
+    axG.append("line")
+      .attr("class", "pcp-axis-line")
+      .attr("y1", 0).attr("y2", iH)
+      .attr("stroke", "var(--border)")
+      .attr("stroke-width", 1.2);
+
+    // Tick marks
+    axG.call(d3.axisLeft(yScales[ax]).ticks(3).tickFormat(d3.format(".1f")))
+      .selectAll("text").style("font-size","8px").attr("fill","var(--text-dim)");
+
+    // Handle for drag — invisible rect above the label
+    axG.append("rect")
+      .attr("class", "axis-handle")
+      .attr("x", -18).attr("y", iH + 4)
+      .attr("width", 36).attr("height", 28)
+      .attr("fill", "transparent")
+      .attr("pointer-events", "all");
+
+    // Axis label
+    g.append("text")
+      .attr("class", "pcp-label")
+      .datum(ax)
+      .attr("x", xScale(ax)).attr("y", iH + 28)
+      .attr("text-anchor","middle").attr("fill","var(--text-mid)")
+      .style("font-size","8.5px").style("font-weight","500")
+      .text(_pcpAxisLabel(ax));
+
+    // mini brush on each axis
+    (function(axis) {
+      const brushG = g.append("g")
+        .attr("class", "pcp-axis-brush")
+        .datum(axis)
+        .attr("transform", `translate(${xScale(axis)-7},0)`);
+      const ab = d3.brushY()
+        .extent([[-7, 0], [14, iH]])
+        .on("brush", function(ev) {
+          if (!ev.selection) return;
+          const [y0, y1] = ev.selection;
+          const lo = yScales[axis].invert(y1);
+          const hi = yScales[axis].invert(y0);
+          ST.featureRows = (ST.caseData?.feature_rows || []).filter(r => r[axis] >= lo && r[axis] <= hi);
+          if (ST.featureRows.length < (ST.caseData?.feature_rows?.length || 0)) {
+            const eids = new Set(ST.featureRows.map(r => getStableId(r)));
+            ST.projectionPoints = (ST.caseData?.projection_points || []).filter(p => eids.has(getStableId(p)));
+          }
+          debouncedRefresh();
+        })
+        .on("end", function(ev) {
+          if (!ev.selection) {
+            ST.featureRows = ST.caseData?.feature_rows || [];
+            ST.projectionPoints = ST.caseData?.projection_points || [];
+            debouncedRefresh();
+          }
+        });
+      brushG.call(ab);
+    })(ax);
+  }
+}
+
+// ====================================================================
+// SEQUENTIAL FRAMES VIEW (ThemeRiver + brush scrubber + playhead)
+// ====================================================================
+function _renderSequenceViewImpl() {
+  const container = document.getElementById("seq-svg").parentElement;
+  const W = container.clientWidth || 1000;
+  const H = container.clientHeight || 250;
+
+  const svg = d3.select("#seq-svg");
+  svg.selectAll("*").remove();
+  svg.attr("width", W).attr("height", H);
+
+  const series = ST.sequenceSeries;
+  if (!series || series.length === 0) {
+    svg.append("text").attr("x", W/2).attr("y", H/2)
+      .attr("text-anchor","middle").attr("fill","var(--text-dim)").style("font-size","11px").text("No sequence data");
+    return;
+  }
+
+  const margin = {top:8, right:55, bottom:30, left:48};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+  const upperH = iH * 0.52;
+  const lowerH = iH * 0.43;
+
+  const tMin = d3.min(series, d => d.t) || 0;
+  const tMax = d3.max(series, d => d.t) || 100;
+  const xScale = d3.scaleLinear().domain([tMin, tMax]).range([0, iW]);
+
+  const mainG = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // ── UPPER: Area between score_model / score_reference ──
+  const yUpper = d3.scaleLinear().domain([0, 1.05]).range([upperH, 0]);
+  const upperG = mainG.append("g");
+
+  // Agreement / disagreement band
+  const diffArea = d3.area()
+    .x(d => xScale(d.t)).y0(d => yUpper(d.score_model)).y1(d => yUpper(d.score_reference))
+    .curve(d3.curveStepAfter);
+  upperG.append("path").datum(series)
+    .attr("fill", d => d3.color("var(--accent)") || "#3B82F6")
+    .attr("fill", "rgba(59,130,246,0.13)")
+    .attr("stroke", "none").attr("d", diffArea);
+
+  // Score model – solid line
+  upperG.append("path").datum(series)
+    .attr("fill","none").attr("stroke","var(--accent)").attr("stroke-width",1.6)
+    .attr("d", d3.line().x(d => xScale(d.t)).y(d => yUpper(d.score_model)).curve(d3.curveStepAfter));
+
+  // Score reference – dashed
+  upperG.append("path").datum(series)
+    .attr("fill","none").attr("stroke","#9CA3AF").attr("stroke-width",1).attr("stroke-dasharray","4,3")
+    .attr("d", d3.line().x(d => xScale(d.t)).y(d => yUpper(d.score_reference)).curve(d3.curveStepAfter));
+
+  // Upper labels
+  upperG.append("text").attr("x", -36).attr("y", upperH/2)
+    .attr("transform", `rotate(-90,-36,${upperH/2})`)
+    .attr("text-anchor","middle").attr("fill","var(--text-mid)").style("font-size","8px").text("Score");
+  upperG.append("text").attr("x", iW+6).attr("y", upperH/2 - 4)
+    .attr("text-anchor","start").attr("fill","var(--accent)").style("font-size","8px").text("model");
+  upperG.append("text").attr("x", iW+6).attr("y", upperH/2 + 10)
+    .attr("text-anchor","start").attr("fill","#9CA3AF").style("font-size","8px").text("ref");
+
+  // Divider
+  upperG.append("line").attr("x1",0).attr("x2",iW).attr("y1",upperH+3).attr("y2",upperH+3)
+    .attr("stroke","var(--border-light)").attr("stroke-width",1);
+
+  // ── LOWER: ThemeRiver-style stacked area ──
+  const lowerG = mainG.append("g").attr("transform", `translate(0,${upperH + 9})`);
+
+  // Build stacked area for visual vs audio evidence
+  const stackKeys = ["c_visual", "c_text", "uq_track"];
+  const stackColors = {c_visual: "#F59E0B", c_text: "#6366F1", uq_track: "#C4B5FD"};
+  const stackLabels = {c_visual: "Visual confidence", c_text: "Text confidence", uq_track: "Track uncertainty"};
+
+  // Prepare data: fill gaps
+  const filled = series.map(d => ({
+    t: d.t,
+    c_visual: d.c_visual || 0,
+    c_text: d.c_text || 0,
+    uq_track: (d.uq_track || 0) * 0.5, // scale down for visibility
+  }));
+
+  const stackGen = d3.stack().keys(stackKeys).offset(d3.stackOffsetWiggle);
+  const stacked = stackGen(filled);
+
+  const yLower = d3.scaleLinear()
+    .domain([d3.min(stacked, L => d3.min(L, d => d[0])) || 0,
+             d3.max(stacked, L => d3.max(L, d => d[1])) || 1])
+    .range([lowerH, 0]);
+
+  const areaGen = d3.area()
+    .x(d => xScale(d.data.t))
+    .y0(d => yLower(d[0]))
+    .y1(d => yLower(d[1]))
+    .curve(d3.curveBasis);
+
+  for (const layer of stacked) {
+    lowerG.append("path").datum(layer)
+      .attr("fill", stackColors[layer.key] || "#ccc")
+      .attr("fill-opacity", 0.55)
+      .attr("stroke", stackColors[layer.key] || "#ccc")
+      .attr("stroke-width", 0.3)
+      .attr("d", areaGen);
+  }
+
+  // Lower axis label
+  lowerG.append("text").attr("x", -36).attr("y", lowerH/2)
+    .attr("transform", `rotate(-90,-36,${lowerH/2})`)
+    .attr("text-anchor","middle").attr("fill","var(--text-mid)").style("font-size","8px")
+    .text("Evidence (stacked)");
+
+  // ── BRUSH (time-window scrubber) ──
+  const throttledBrush = throttle(() => {
+    filterByBrushDebounced();
+  }, 60);
+
+  const brush = d3.brushX()
+    .extent([[0, 0], [iW, iH]])
+    .on("brush", function(ev) {
+      if (!ev.selection) return;
+      const [bx0, bx1] = ev.selection;
+      ST.brushExtent = [xScale.invert(bx0), xScale.invert(bx1)];
+      throttledBrush();
+    })
+    .on("end", function(ev) {
+      if (!ev.selection) {
+        ST.brushExtent = [0, Infinity];
+        resetBrushFilterDebounced();
+      }
+    });
+
+  // Playhead
+  const playhead = mainG.append("line")
+    .attr("class", "playhead")
+    .attr("y1", 0).attr("y2", iH)
+    .attr("stroke", "#2563eb").attr("stroke-width", 2)
+    .attr("visibility", "hidden")
+    .attr("pointer-events", "none");
+
+  // Brush on TOP so it receives drag events.
+  mainG.append("g").attr("class", "brush").call(brush);
+
+  // Click-to-seek on the chart background without blocking brush gestures.
+  svg.on("click", function(ev) {
+    if (ev.target && ev.target.closest && ev.target.closest(".brush,.playhead")) return;
+    const [mx] = d3.pointer(ev, mainG.node());
+    if (mx < 0 || mx > iW) return;
+    seekVideo(xScale.invert(mx));
+  });
+
+  // X axis
+  mainG.append("g").attr("transform", `translate(0,${iH})`)
+    .call(d3.axisBottom(xScale).ticks(8).tickFormat(d => `${d.toFixed(0)}s`))
+    .selectAll("text").style("font-size","9px").attr("fill","var(--text-dim)");
+
+  // Restore playhead position after view switch
+  if (isFinite(ST.currentTime) && ST.currentTime > 0) {
+    const px = xScale(ST.currentTime);
+    playhead.attr("x1", px).attr("x2", px).attr("visibility", "visible");
+  }
+
+  // Store for playhead updates
+  ST._seqState = { xScale, playhead, iW, iH, mainG };
+}
+
+const filterByBrushDebounced = debounce(filterByBrush, 60);
+const resetBrushFilterDebounced = debounce(resetBrushFilter, 60);
+
+function filterByBrush() {
+  const [lo, hi] = ST.brushExtent;
+  const allRows = ST.caseData?.feature_rows || [];
+  ST.featureRows = allRows.filter(r => r.t_center >= lo && r.t_center <= hi);
+  const eids = new Set(ST.featureRows.map(r => getStableId(r)));
+  ST.projectionPoints = (ST.caseData?.projection_points || []).filter(p => eids.has(getStableId(p)));
+  ST.sequenceSeries = (ST.caseData?.sequence_series || []).filter(s => s.t >= lo && s.t <= hi);
+  renderProjection();
+  renderParallelCoordinates();
+  renderDetailTable();
+  renderBottomView();
+}
+
+function resetBrushFilter() {
+  ST.featureRows = ST.caseData?.feature_rows || [];
+  ST.projectionPoints = ST.caseData?.projection_points || [];
+  ST.sequenceSeries = ST.caseData?.sequence_series || [];
+  renderProjection();
+  renderParallelCoordinates();
+  renderDetailTable();
+  renderBottomView();
+}
+
+// ====================================================================
+// DETAIL TABLE
+// ====================================================================
+function renderDetailTable() {
+  const headRow = document.getElementById("detail-table-head");
+  const body = document.getElementById("detail-table-body");
+  const cols = ["t_center","track_id","student_id","semantic_label_en","verification_status","p_match","reliability_final","c_visual","c_text"];
+  const labels = {t_center:"Time",track_id:"Trk",student_id:"Student",semantic_label_en:"Behavior",verification_status:"Status",p_match:"P(M)",reliability_final:"Rel",c_visual:"c_vis",c_text:"c_txt"};
+
+  headRow.innerHTML = `<tr>${cols.map(c => `<th data-col="${c}" onclick="sortTable('${c}')">${labels[c]||c}</th>`).join("")}</tr>`;
+
+  const rows = ST.featureRows.slice(0, 200);
+  body.innerHTML = rows.map(r => {
+    const sid = getStableId(r);
+    const sel = sid === ST.selectedEventId ? " selected" : "";
+    return `<tr class="${sel}" data-event-id="${sid}" onclick="selectTableRow('${sid}',${r.t_center})">
+      ${cols.map(c => {
+        let v = r[c];
+        if (c === "verification_status") {
+          const col = ST.statusColor(v);
+          return `<td><span class="table-status" style="background:${col}"></span>${v||""}</td>`;
+        }
+        if (typeof v === "number") v = v.toFixed(3);
+        return `<td>${v ?? ""}</td>`;
+      }).join("")}
+    </tr>`;
+  }).join("");
+}
+
+function selectTableRow(eid, tc) {
+  ST.selectedEventId = eid;
+  seekVideo(tc);
+  showEvidencePanelById(eid);
+  updateSelection([eid]);
+  highlightLinked(eid, null);
+  updateDetailTableSelection(eid);
+  updateProjectionSelection();
+  renderDetailTable();
+}
+
+function updateDetailTableSelection(eid) {
+  document.querySelectorAll("#detail-table-body tr").forEach(tr => {
+    tr.classList.toggle("selected", tr.dataset.eventId === eid);
+  });
+}
+
+let _sortDir = {};
+function sortTable(col) {
+  _sortDir[col] = !_sortDir[col];
+  const dir = _sortDir[col] ? 1 : -1;
+  ST.featureRows.sort((a,b) => {
+    const va = a[col], vb = b[col];
+    if (typeof va === "string") return va.localeCompare(vb) * dir;
+    return (va - vb) * dir;
+  });
+  renderDetailTable();
+  renderProjection();
+  renderParallelCoordinates();
+}
+
+// ====================================================================
+// VIDEO SYNC — rAF-driven playhead + seek
+// ====================================================================
+let _playheadRafId = null;
+
+function _playheadTick() {
+  const vid = document.getElementById("video-player");
+  if (!vid || !vid.duration || !isFinite(vid.duration)) {
+    _playheadRafId = requestAnimationFrame(_playheadTick);
+    return;
+  }
+  const t = Math.max(0, Math.min(vid.currentTime, vid.duration));
+  ST.currentTime = t;
+  const ss = ST._seqState;
+  if (ss && ss.playhead && ss.xScale) {
+    const x = ss.xScale(t);
+    ss.playhead.attr("x1", x).attr("x2", x).attr("visibility", "visible");
+  }
+  _playheadRafId = requestAnimationFrame(_playheadTick);
+}
+
+function _startPlayheadRaf() {
+  if (_playheadRafId) cancelAnimationFrame(_playheadRafId);
+  _playheadRafId = requestAnimationFrame(_playheadTick);
+}
+
+function _stopPlayheadRaf() {
+  if (_playheadRafId) {
+    cancelAnimationFrame(_playheadRafId);
+    _playheadRafId = null;
+  }
+}
+
+function seekVideo(t) {
+  const vid = document.getElementById("video-player");
+  if (!vid || !isFinite(t) || !vid.src) return;
+  const clamped = Math.max(0, Math.min(t, vid.duration || Infinity));
+  vid.currentTime = clamped;
+  ST.currentTime = clamped;
+  // Immediate one-shot update (rAF will take over if playing)
+  const ss = ST._seqState;
+  if (ss && ss.playhead && ss.xScale) {
+    const x = ss.xScale(clamped);
+    ss.playhead.attr("x1", x).attr("x2", x).attr("visibility", "visible");
+  }
+}
+
+// Video play → rAF loop for smooth playhead
+document.getElementById("video-player").addEventListener("play", () => {
+  ST.isPlaying = true;
+  document.getElementById("btn-play").innerHTML = "⏸ Pause";
+  _startPlayheadRaf();
+});
+
+// Video pause / ended → stop rAF loop
+document.getElementById("video-player").addEventListener("pause", () => {
+  ST.isPlaying = false;
+  document.getElementById("btn-play").innerHTML = "▶ Play";
+  _stopPlayheadRaf();
+});
+document.getElementById("video-player").addEventListener("ended", () => {
+  ST.isPlaying = false;
+  document.getElementById("btn-play").innerHTML = "▶ Play";
+  _stopPlayheadRaf();
+});
+
+// User seek (drag progress bar) → snap playhead instantly
+document.getElementById("video-player").addEventListener("seeked", () => {
+  const vid = document.getElementById("video-player");
+  if (!vid) return;
+  const t = vid.currentTime;
+  ST.currentTime = t;
+  const ss = ST._seqState;
+  if (ss && ss.playhead && ss.xScale) {
+    const x = ss.xScale(t);
+    ss.playhead.attr("x1", x).attr("x2", x).attr("visibility", "visible");
+  }
+});
+
+// Loadedmetadata — prime duration so xScale can cover full range
+document.getElementById("video-player").addEventListener("loadedmetadata", () => {
+  const vid = document.getElementById("video-player");
+  if (vid && vid.duration && isFinite(vid.duration)) {
+    ST.videoDuration = vid.duration;
+  }
+});
+
+// Video error fallback
+document.getElementById("video-player").addEventListener("error", () => {
+  const vid = document.getElementById("video-player");
+  const err = vid?.error;
+  console.error("video error:", err);
+  _stopPlayheadRaf();
+  advanceVideoSource(err?.message || "The current video source failed to load.", ST._activeVideoGeneration || 0);
+});
+
+// ====================================================================
+// TOOLTIP
+// ====================================================================
+function showTooltip(ev, d) {
+  const tip = document.getElementById("tooltip");
+  const status = d.verification_status || "unverified";
+  const cls = status === "match" ? "tt-match" : status === "uncertain" ? "tt-uncertain" : "tt-mismatch";
+  const alignScore = getAlignScore(d);
+  tip.innerHTML = `
+    <div class="tt-row"><span class="tt-label">ID</span><span>${getStableId(d) || '–'}</span></div>
+    <div class="tt-row"><span class="tt-label">Status</span><span class="${cls}">${status}</span></div>
+    <div class="tt-row"><span class="tt-label">Track</span><span>${d.track_id ?? '–'}</span></div>
+    <div class="tt-row"><span class="tt-label">Behavior</span><span>${d.semantic_label_en || d.behavior_code || '–'} / ${d.semantic_label_zh || ''}</span></div>
+    <div class="tt-row"><span class="tt-label">Time</span><span>${d.t_center?.toFixed?.(1) ?? d.t_center ?? '–'}s</span></div>
+    <div class="tt-row"><span class="tt-label">C_VIS</span><span>${d.c_visual?.toFixed?.(3) ?? '–'}</span></div>
+    <div class="tt-row"><span class="tt-label">C_TXT</span><span>${d.c_text?.toFixed?.(3) ?? '–'}</span></div>
+    <div class="tt-row"><span class="tt-label">ALIGN</span><span>${Number.isFinite(alignScore) ? alignScore.toFixed(3) : '–'}</span></div>
+    <div class="tt-row"><span class="tt-label">UQ</span><span>${d.uq_track?.toFixed?.(3) ?? '–'}</span></div>
+    <div class="tt-row"><span class="tt-label">P(Match)</span><span>${d.p_match?.toFixed?.(3) ?? '–'}</span></div>
+  `;
+  tip.style.left = (ev.clientX + 18) + "px";
+  tip.style.top  = (ev.clientY - 8) + "px";
+  tip.style.opacity = 1;
+}
+
+function hideTooltip() {
+  document.getElementById("tooltip").style.opacity = 0;
+}
+
+// ====================================================================
+// EVIDENCE PANEL
+// ====================================================================
+function showEvidencePanel(d) {
+  const panel = document.getElementById("evidence-panel");
+  const content = document.getElementById("evidence-content");
+  const ve = ST.verifiedEvents.find(v => v.event_id === d.event_id) || {};
+  const query = ST.caseData?.event_queries?.find(q => q.event_id === d.event_id) || {};
+  const nearby = ST.transcript.filter(t => {
+    const tc = d.t_center || 0;
+    const t0 = t.start ?? t.start_time ?? 0;
+    const t1 = t.end ?? t.end_time ?? 0;
+    return t0 <= tc + 3 && t1 >= tc - 3;
+  });
+  const status = d.verification_status || ve.match_label || "unverified";
+  const qSrc = d.query_source || ve.query_source || query.query_source || "unknown";
+  const isFallback = d.is_visual_fallback || ve.is_visual_fallback || query.is_visual_fallback || false;
+  const querySourceLabel = isFallback
+    ? '<span style="color:var(--uncertain);font-weight:600;" title="ASR unavailable; visual fallback used">⚠ Visual Fallback</span>'
+    : (qSrc === "asr" ? '<span style="color:var(--match);font-weight:600;">✓ ASR</span>' : qSrc);
+
+  content.innerHTML = `
+    <div class="ev-section">
+      <div class="ev-section-title">Event</div>
+      <strong style="font-size:14px;">${getStableId(d) || '–'}</strong>
+      <span style="margin-left:8px;font-weight:600;color:${ST.statusColor(status)}">${status}</span>
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Query Source</div>
+      ${querySourceLabel}
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Student &amp; Behavior</div>
+      ${d.student_id || d.track_id || '–'} — ${d.semantic_label_en || d.behavior_code || '–'} / ${d.semantic_label_zh || ''}
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Time Window</div>
+      t<sub>center</sub> = ${d.t_center?.toFixed?.(1) ?? '–'} s &nbsp;
+      [${(d.time_range||[0,0])[0]?.toFixed?.(1)||0}, ${(d.time_range||[0,0])[1]?.toFixed?.(1)||0}]
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Verification Scores</div>
+      <table style="width:100%;font-size:11px;">
+        <tr><td>P(Match)</td><td style="font-weight:600;">${(d.p_match ?? ve.p_match ?? 0).toFixed(4)}</td></tr>
+        <tr><td>P(Mismatch)</td><td style="font-weight:600;">${(d.p_mismatch ?? ve.p_mismatch ?? 0).toFixed(4)}</td></tr>
+        <tr><td>Reliability</td><td style="font-weight:600;">${(d.reliability_final ?? ve.reliability_score ?? 0).toFixed(4)}</td></tr>
+        <tr><td>Uncertainty</td><td style="font-weight:600;">${(d.uq_track ?? ve.uncertainty ?? 0).toFixed(4)}</td></tr>
+      </table>
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Modality Weights</div>
+      c<sub>visual</sub> = ${d.c_visual?.toFixed?.(3) ?? '–'} &nbsp;
+      c<sub>text</sub> = ${d.c_text?.toFixed?.(3) ?? '–'}<br>
+      w<sub>V</sub> = ${d.weight_v?.toFixed?.(3) ?? '–'} &nbsp;
+      w<sub>A</sub> = ${d.weight_a?.toFixed?.(3) ?? '–'}
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Query Text</div>
+      <span style="font-style:italic;color:var(--text-mid);">"${ve.query_text || query.query_text || '–'}"</span>
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Nearby Transcript</div>
+      ${nearby.slice(0,5).map(t =>
+        `<div style="margin:3px 0;font-size:10px;color:var(--text-mid);"><span style="color:var(--text-dim);">[${(t.start ?? t.start_time ?? 0).toFixed(1)}s]</span> ${t.text}</div>`
+      ).join("") || '<span style="color:var(--text-dim);">–</span>'}
+    </div>
+    <div id="evidence-api-section" class="ev-section" style="display:none;">
+      <div class="ev-section-title">Top-K Alignment Candidates <span style="font-weight:400;color:var(--text-dim);">(evidence API)</span></div>
+      <div id="evidence-api-content"></div>
+    </div>
+  `;
+  panel.classList.add("visible");
+
+  // Fetch full evidence from the API asynchronously
+  const caseId = ST.activeCaseId || ST.caseId || "";
+  const eventId = d.event_id || getStableId(d) || "";
+  if (caseId && eventId) {
+    fetchEvidenceAPI(caseId, eventId);
+  }
+}
+
+function fmtEvidenceScore(value, digits = 2) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "n/a";
+}
+
+function evidenceBarWidth(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, v * 100));
+}
+
+function conflictColor(conflictType) {
+  const palette = {
+    none: "var(--match)",
+    low_evidence: "var(--uncertain)",
+    temporal_mismatch: "#7C3AED",
+    semantic_mismatch: "var(--mismatch)",
+    visual_only: "#2563EB",
+    text_only: "#059669"
+  };
+  return palette[conflictType] || "var(--text-mid)";
+}
+
+function renderCoherenceGlyph(coh) {
+  const values = [
+    { key: "V", value: coh.c_visual, color: "#2563EB", path: "M28 28 L28 4 A24 24 0 0 1 52 28 Z" },
+    { key: "T", value: coh.c_text, color: "#059669", path: "M28 28 L52 28 A24 24 0 0 1 28 52 Z" },
+    { key: "O", value: coh.c_object, color: "#D97706", path: "M28 28 L28 52 A24 24 0 0 1 4 28 Z" },
+    { key: "A", value: coh.align_score, color: "#7C3AED", path: "M28 28 L4 28 A24 24 0 0 1 28 4 Z" }
+  ];
+  const conflict = coh.conflict_type || "low_evidence";
+  const sectors = values.map(v => {
+    const score = Number(v.value);
+    const opacity = Number.isFinite(score) ? Math.max(0.18, Math.min(0.95, score)) : 0.08;
+    const hatch = Number.isFinite(score) ? "" : ' stroke-dasharray="2 2"';
+    return `<path d="${v.path}" fill="${v.color}" opacity="${opacity}" stroke="#fff" stroke-width="1"${hatch}></path>`;
+  }).join("");
+  return `<svg width="56" height="56" viewBox="0 0 56 56" aria-label="Evidence glyph">
+    <circle cx="28" cy="28" r="25" fill="#fff" stroke="var(--border)" stroke-width="1"></circle>
+    ${sectors}
+    <circle cx="28" cy="28" r="9" fill="${conflictColor(conflict)}" stroke="#fff" stroke-width="2"></circle>
+    <text x="28" y="31" text-anchor="middle" font-size="8" font-weight="700" fill="#fff">${conflict === "none" ? "OK" : "!"}</text>
+  </svg>`;
+}
+
+function renderEvidenceCoherence(data) {
+  const coh = data.coherence || {};
+  if (coh.hidden) {
+    return `<div class="coherence-card"><div class="coherence-head"><strong>Evidence Coherence</strong><span class="coherence-status">hidden</span></div></div>`;
+  }
+  const conflict = coh.conflict_type || "low_evidence";
+  const channels = [
+    ["VIS", coh.c_visual, "#2563EB"],
+    ["TXT", coh.c_text, "#059669"],
+    ["OBJ", coh.c_object, "#D97706"],
+    ["ALIGN", coh.align_score, "#7C3AED"]
+  ];
+  const rows = channels.map(([label, value, color]) => `
+    <div class="coh-row">
+      <span>${label}</span>
+      <span class="coh-bar"><span style="width:${evidenceBarWidth(value)}%;background:${color};"></span></span>
+      <span>${fmtEvidenceScore(value)}</span>
+    </div>
+  `).join("");
+  const flags = Array.isArray(coh.quality_flags) && coh.quality_flags.length
+    ? coh.quality_flags.map(f => `<span class="quality-chip">${f}</span>`).join("")
+    : '<span class="quality-chip">no_quality_flags</span>';
+  const card = data.observation_card || {};
+  const blocked = Array.isArray(card.blocked_reasons) && card.blocked_reasons.length
+    ? card.blocked_reasons.join("; ")
+    : "passes current gate";
+  const cardState = card.eligible ? "eligible" : "review";
+  return `<div class="coherence-card">
+    <div class="coherence-head">
+      <strong>Evidence Coherence</strong>
+      <span class="coherence-status" style="color:${conflictColor(conflict)};">${conflict}</span>
+    </div>
+    <div class="coherence-grid">
+      ${renderCoherenceGlyph(coh)}
+      <div class="coherence-metrics">
+        <div class="coh-row"><span>COH</span><span class="coh-bar"><span style="width:${evidenceBarWidth(coh.coherence_score)}%;background:${conflictColor(conflict)};"></span></span><span>${fmtEvidenceScore(coh.coherence_score)}</span></div>
+        ${rows}
+      </div>
+    </div>
+    <div class="quality-flags">${flags}</div>
+    <div class="observation-card">
+      Observation card: <strong>${cardState}</strong><br>
+      ${blocked}
+    </div>
+  </div>`;
+}
+
+async function fetchEvidenceAPI(caseId, eventId) {
+  const section = document.getElementById("evidence-api-section");
+  const content = document.getElementById("evidence-api-content");
+  if (!section || !content) return;
+  try {
+    const resp = await fetch(`/api/case/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(eventId)}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const selected = data.selected || {};
+    const dist = selected.distillation || {};
+    const candidates = data.align_candidates || [];
+    if (!candidates.length && !selected) return;
+
+    section.style.display = "";
+    const selTrackId = selected.track_id;
+    const distEnabled = !!dist.enabled;
+    const fusionMode = dist.fusion_mode || selected.fusion_mode || "unknown";
+    const verifierLabel = distEnabled ? "LLM-Distilled Student V4" : `Fallback / ${fusionMode}`;
+    const teacherSource = dist.teacher_source || "n/a";
+    const teacherDataset = dist.teacher_dataset || "n/a";
+    const featureVersion = dist.student_feature_version || "n/a";
+    const modelName = dist.student_model_name || "n/a";
+    let html = `<div style="margin-bottom:8px;padding:6px;border:1px solid var(--panel-border);border-radius:6px;background:rgba(255,255,255,0.04);font-size:10px;">
+      <div style="font-weight:700;color:${distEnabled ? 'var(--match)' : 'var(--text-mid)'};">${verifierLabel}</div>
+      <div style="margin-top:3px;color:var(--text-dim);">
+        fusion=${fusionMode} &nbsp; model=${modelName}<br>
+        teacher=${teacherSource} &nbsp; dataset=${teacherDataset}<br>
+        feature=${featureVersion} &nbsp; benchmark=${dist.evaluation_kind || 'runtime_verifier'}
+      </div>
+      <div style="margin-top:3px;color:var(--uncertain);">Silver benchmark only; not human gold accuracy.</div>
+    </div>`;
+    html += `<div style="margin-bottom:8px;">${renderEvidenceCoherence(data)}</div>`;
+    if (!candidates.length) {
+      content.innerHTML = html;
+      return;
+    }
+    html += `<div style="margin-bottom:4px;font-size:10px;color:var(--text-dim);">
+      Selected: Student ${selected.student_id || ('S' + String(selTrackId).padStart(2,'0'))} (rank ${selected.selected_candidate_rank || '?'}/${selected.candidate_count || '?'})
+    </div>`;
+    html += `<table style="width:100%;font-size:10px;border-collapse:collapse;">`;
+    html += `<tr style="color:var(--text-dim);"><th style="text-align:left;">Rank</th><th>Student</th><th>Action</th><th>Overlap</th><th>Conf</th><th>UQ</th></tr>`;
+    for (const c of candidates.slice(0, 8)) {
+      const isSel = c.track_id === selTrackId;
+      const bg = isSel ? 'background:var(--accent-light);' : '';
+      html += `<tr style="${bg}">
+        <td style="font-weight:${isSel ? 700 : 400};">${c.rank || '–'}</td>
+        <td>${c.student_id || ('S' + String(c.track_id).padStart(2,'0'))}</td>
+        <td>${c.semantic_label_en || c.action || '–'}</td>
+        <td>${(c.overlap||0).toFixed(2)}</td>
+        <td>${(c.action_confidence||0).toFixed(2)}</td>
+        <td>${(c.uq_track||0).toFixed(2)}</td>
+      </tr>`;
+    }
+    html += `</table>`;
+    content.innerHTML = html;
+  } catch (e) {
+    // Evidence API unavailable — leave section hidden
+  }
+}
+
+function showEvidencePanelById(eid) {
+  const fullRows = ST.caseData?.feature_rows || ST.featureRows;
+  const row = fullRows.find(r => getStableId(r) === eid || r.event_id === eid);
+  if (row) showEvidencePanel(row);
+}
+
+document.getElementById("ev-close").addEventListener("click", () => {
+  document.getElementById("evidence-panel").classList.remove("visible");
+});
+
+// ====================================================================
+// SR ABLATION VIEW
+// ====================================================================
+async function toggleAblationView() {
+  ST.showAblation = !ST.showAblation;
+  const av = document.getElementById("ablation-view");
+  const proj = document.getElementById("panel-proj");
+  const detail = document.getElementById("panel-detail");
+  const bottom = document.getElementById("panel-bottom");
+  const toggleBtn = document.getElementById("ablation-toggle");
+
+  if (ST.showAblation) {
+    av.style.display = "flex";
+    proj.style.display = "none";
+    detail.style.display = "none";
+    bottom.style.display = "none";
+    toggleBtn.textContent = "← Projection";
+    await loadAblationView();
+  } else {
+    av.style.display = "none";
+    proj.style.display = "";
+    detail.style.display = "";
+    bottom.style.display = "";
+    toggleBtn.textContent = "SR Ablation";
+    renderProjection();
+    renderParallelCoordinates();
+    renderBottomView();
+    renderDetailTable();
+  }
+}
+
+document.getElementById("ablation-toggle").addEventListener("click", toggleAblationView);
+document.getElementById("ablation-back").addEventListener("click", () => { ST.showAblation = true; toggleAblationView(); });
+
+// ── Projection mode switching ──
+document.getElementById("btn-mode-points").addEventListener("click", function() {
+  ST.projectionMode = "points";
+  document.getElementById("btn-mode-points").classList.add("active");
+  document.getElementById("btn-mode-glyphs").classList.remove("active");
+  renderProjection();
+});
+document.getElementById("btn-mode-glyphs").addEventListener("click", function() {
+  ST.projectionMode = "glyphs";
+  document.getElementById("btn-mode-glyphs").classList.add("active");
+  document.getElementById("btn-mode-points").classList.remove("active");
+  renderProjection();
+});
+document.getElementById("btn-clear-selection").addEventListener("click", function() {
+  clearSelection();
+  this.style.display = "none";
+});
+
+function _isGlyphSelected(d) {
+  if (!hasSelection()) return false;
+  return (d.ids || []).some(id => ST.selectedIds.has(String(id)));
+}
+
+function _buildClustersFromProjection() {
+  // Fallback: group projection points by cluster_id
+  const groups = {};
+  for (const pt of ST.projectionPoints) {
+    const cid = pt.cluster_id ?? 0;
+    if (!groups[cid]) groups[cid] = [];
+    groups[cid].push(pt);
+  }
+  const result = [];
+  for (const [cid, pts] of Object.entries(groups)) {
+    const n = pts.length;
+    const cx = pts.reduce((s, p) => s + (p.x || 0), 0) / n;
+    const cy = pts.reduce((s, p) => s + (p.y || 0), 0) / n;
+    // Compute feature means from feature_summary in points
+    const mean = (key, def) => {
+      const vals = pts.map(p => (p.feature_summary || {})[key]).filter(v => v != null);
+      return vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : def;
+    };
+    const c_vis = mean("c_visual", 0.5);
+    const c_txt = mean("c_text", 0.5);
+    const pm = mean("p_match", 0.5);
+    // Status ratios
+    const sc = { match: 0, uncertain: 0, mismatch: 0, unverified: 0 };
+    for (const p of pts) { const s = p.verification_status || "unverified"; sc[s] = (sc[s] || 0) + 1; }
+    // Top behaviors
+    const bc = {};
+    for (const p of pts) { const b = p.behavior_code || "unknown"; bc[b] = (bc[b] || 0) + 1; }
+    const topB = Object.entries(bc).sort((a,b) => b[1]-a[1]).slice(0, 5);
+    result.push({
+      cluster_id: +cid, size: n, x: cx, y: cy,
+      feature_mean: {
+        c_visual: round4(c_vis),
+        c_text: round4(c_txt),
+        align_score: round4(getAlignScore({ p_match: pm, c_visual: c_vis, c_text: c_txt })),
+        uq: round4(mean("uq_track", 0.1)),
+        score_model: round4(pm),
+      },
+      status_ratio: {
+        match: round4(sc.match / n),
+        uncertain: round4(sc.uncertain / n),
+        mismatch: round4(sc.mismatch / n),
+      },
+      top_behaviors: topB,
+      ids: pts.map(p => p.event_id || p.point_id).slice(0, 200),
+    });
+  }
+  return result;
+}
+function round4(v) { return Math.round(v * 10000) / 10000; }
+
+async function loadAblationView() {
+  try {
+    const resp = await api("/api/v2/vsumvis/ablation/sr");
+    const ablations = resp.ablations || [];
+    renderAblationBars(ablations);
+    if (ablations.length > 0) renderAblationDetail(ablations[0]);
+  } catch (err) { console.error("loadAblationView:", err); }
+}
+
+function renderAblationBars(ablations) {
+  const svg = d3.select("#ablation-bar-svg");
+  const container = svg.node().parentElement;
+  const W = container.clientWidth || 600;
+  const H = container.clientHeight || 480;
+  svg.attr("width", W).attr("height", H).selectAll("*").remove();
+
+  const allVariants = [];
+  for (const ab of ablations) {
+    for (const v of (ab.variants || [])) {
+      allVariants.push({
+        case_id: ab.case_id, video_stem: ab.video_stem,
+        variant_id: (v.variant || v.variant_id || "?").replace(/_/g,' '),
+        behavior_f1: v.behavior_macro_f1 || 0,
+        person_f1: v.person_f1 || 0,
+        MOTA: v.MOTA || 0, HOTA: v.HOTA || 0,
+        tracked_students: v.tracked_students || 0,
+        effective_fps: v.effective_fps || 0,
+        stage_runtime_sec: v.stage_runtime_sec || 0,
+        avg_pose_conf: v.avg_pose_conf || 0,
+        rear_avg_visible_keypoints: v.rear_avg_visible_keypoints || 0,
+      });
+    }
+  }
+
+  if (allVariants.length === 0) {
+    svg.append("text").attr("x", W/2).attr("y", H/2)
+      .attr("text-anchor","middle").attr("fill","var(--text-dim)").text("No ablation variants");
+    return;
+  }
+
+  const margin = {top:16, right:16, bottom:110, left:48};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const sorted = allVariants.sort((a,b) => b.behavior_f1 - a.behavior_f1);
+  const xScale = d3.scaleBand().domain(sorted.map(d => d.variant_id)).range([0, iW]).padding(0.12);
+  const yMax = d3.max(sorted, d => d.behavior_f1) * 1.12 || 1;
+  const yScale = d3.scaleLinear().domain([0, yMax]).range([iH, 0]);
+
+  // Color by case
+  const caseColor = d3.scaleOrdinal()
+    .domain(ablations.map(a => a.case_id))
+    .range(["#3B82F6","#8B5CF6","#059669"]);
+
+  g.selectAll("rect.ablation-bar")
+    .data(sorted)
+    .join("rect")
+    .attr("class", "ablation-bar")
+    .attr("x", d => xScale(d.variant_id))
+    .attr("y", d => yScale(d.behavior_f1))
+    .attr("width", xScale.bandwidth())
+    .attr("height", d => Math.max(0, iH - yScale(d.behavior_f1)))
+    .attr("fill", d => caseColor(d.case_id))
+    .attr("fill-opacity", 0.75)
+    .attr("rx", 2)
+    .on("click", function(ev, d) {
+      const ab = ablations.find(a => a.case_id === d.case_id);
+      if (ab) renderAblationDetail(ab);
+    });
+
+  g.append("g").attr("transform", `translate(0,${iH})`)
+    .call(d3.axisBottom(xScale))
+    .selectAll("text")
+    .attr("transform", "rotate(-32)").attr("text-anchor","end")
+    .attr("dx","-0.4em").attr("dy","0.2em")
+    .style("font-size","8px").attr("fill","var(--text-mid)");
+
+  g.append("g").call(d3.axisLeft(yScale).ticks(5));
+  g.append("text").attr("x", -34).attr("y", -8)
+    .attr("fill","var(--text-mid)").style("font-size","9px").style("font-weight","500")
+    .text("Behavior Macro F1");
+}
+
+function renderAblationDetail(ablation) {
+  if (!ablation) return;
+  const panel = document.getElementById("ablation-detail-panel");
+  const best = ablation.best_variant || {};
+  const delta = ablation.A0_vs_A8_delta || {};
+  panel.innerHTML = `
+    <div style="margin-bottom:12px;">
+      <strong style="font-size:13px;color:var(--text-strong)">${ablation.case_id || ablation.video_stem}</strong>
+      <span style="color:var(--text-dim);margin-left:8px;font-size:10px;">${ablation.variant_count || 0} variants</span>
+    </div>
+    <div class="ev-section">
+      <div class="ev-section-title">Best Variant</div>
+      <span style="color:var(--match);font-weight:600;">${best.variant || best.variant_id || '–'}</span><br>
+      <span style="font-size:11px;">
+        Behavior F1: <strong>${(best.behavior_macro_f1||0).toFixed(4)}</strong><br>
+        Person F1: ${(best.person_f1||0).toFixed(4)} &nbsp; MOTA: ${(best.MOTA||0).toFixed(4)}<br>
+        HOTA: ${(best.HOTA||0).toFixed(4)} &nbsp; IDSW: ${best.IDSW||0}<br>
+        Students: ${best.tracked_students || '–'} &nbsp; FPS: ${(best.effective_fps||0).toFixed(2)}<br>
+        Runtime: ${(best.stage_runtime_sec||0).toFixed(0)}s
+      </span>
+    </div>
+    ${Object.keys(delta).length > 0 ? `
+    <div class="ev-section">
+      <div class="ev-section-title">A0 → A8 Delta</div>
+      <table style="width:100%;font-size:10px;">
+        ${Object.entries(delta).slice(0, 10).map(([k,v]) =>
+          `<tr><td style="color:var(--text-dim);">${k.replace(/_/g,' ')}</td>
+           <td style="text-align:right;font-family:var(--font-mono);color:${v.delta>0?'var(--match)':'var(--mismatch)'}">${v.delta>0?'+':''}${(v.delta||0).toFixed(4)}</td></tr>`
+        ).join("")}
+      </table>
+    </div>` : ''}
+    ${ablation.contact_sheet_url ? `
+    <div class="ev-section">
+      <div class="ev-section-title">Contact Sheet</div>
+      <img src="${ablation.contact_sheet_url}" style="width:100%;border-radius:4px;border:1px solid var(--border);" loading="lazy"/>
+    </div>` : ''}
+    <div style="margin-top:10px;">
+      <button onclick="compareA0A8('${ablation.case_id}')"
+        style="background:var(--bg);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-ui);font-size:10px;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:500;">Compare A0 vs A8</button>
+    </div>`;
+}
+
+async function compareA0A8(caseId) {
+  try {
+    const resp = await api(`/api/v2/vsumvis/compare/sr?case_id=${encodeURIComponent(caseId)}&a=A0_full_no_sr&b=A8_adaptive_sliced_artifact_deblur_opencv`);
+    const d = resp.data;
+    if (!d) return;
+    const panel = document.getElementById("ablation-detail-panel");
+    const delta = d.delta || {};
+    panel.innerHTML = `
+      <div style="margin-bottom:10px;">
+        <strong style="color:var(--text-strong)">A0 vs A8 Side-by-Side</strong>
+        <span style="color:var(--text-dim);margin-left:6px;font-size:10px;">${caseId}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;">
+        <div style="background:var(--bg);padding:10px;border-radius:5px;border:1px solid var(--border);">
+          <div style="color:var(--text-dim);font-size:9px;font-weight:600;margin-bottom:4px;">A0: ${d.variant_a.label}</div>
+          <div>Beh F1: <strong>${(d.variant_a.data.behavior_macro_f1||0).toFixed(4)}</strong></div>
+          <div>Person F1: ${(d.variant_a.data.person_f1||0).toFixed(4)}</div>
+          <div>Students: ${d.variant_a.data.tracked_students||'–'}</div>
+          <div>FPS: ${(d.variant_a.data.effective_fps||0).toFixed(2)}</div>
+          <div>Runtime: ${(d.variant_a.data.stage_runtime_sec||0).toFixed(0)}s</div>
+        </div>
+        <div style="background:var(--bg);padding:10px;border-radius:5px;border:1px solid var(--border);">
+          <div style="color:var(--text-dim);font-size:9px;font-weight:600;margin-bottom:4px;">A8: ${d.variant_b.label}</div>
+          <div>Beh F1: <strong>${(d.variant_b.data.behavior_macro_f1||0).toFixed(4)}</strong></div>
+          <div>Person F1: ${(d.variant_b.data.person_f1||0).toFixed(4)}</div>
+          <div>Students: ${d.variant_b.data.tracked_students||'–'}</div>
+          <div>FPS: ${(d.variant_b.data.effective_fps||0).toFixed(2)}</div>
+          <div>Runtime: ${(d.variant_b.data.stage_runtime_sec||0).toFixed(0)}s</div>
+        </div>
+      </div>
+      <div class="ev-section" style="margin-top:10px;">
+        <div class="ev-section-title">Key Deltas (A8 − A0)</div>
+        <table style="width:100%;font-size:10px;">
+          ${Object.entries(delta).slice(0,12).map(([k,v]) =>
+            `<tr><td style="color:var(--text-dim);">${k.replace(/_/g,' ')}</td>
+             <td style="text-align:right;font-family:var(--font-mono);color:${v.delta>0?'var(--match)':'var(--mismatch)'}">${v.delta>0?'+':''}${(v.delta||0).toFixed(4)}</td></tr>`
+          ).join("")}
+        </table>
+      </div>
+      ${d.contact_sheet_url ? `<img src="${d.contact_sheet_url}" style="width:100%;border-radius:4px;margin-top:8px;border:1px solid var(--border);" loading="lazy"/>` : ''}
+      <button onclick="loadAblationView()"
+        style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font-ui);font-size:10px;padding:4px 12px;border-radius:4px;cursor:pointer;margin-top:8px;">&larr; Back to overview</button>`;
+  } catch (err) { console.error("compareA0A8:", err); }
+}
+
+// ====================================================================
+// PROJECTION METHOD / UNIT SWITCHERS
+// ====================================================================
+document.getElementById("proj-method").addEventListener("change", async function() {
+  if (!ST.activeCaseId) return;
+  showSpinner('proj-spinner');
+  try {
+    const unit = document.getElementById("proj-unit").value;
+    const resp = await api(`/api/v2/vsumvis/projection/${ST.activeCaseId}?unit=${unit}&method=${this.value}`);
+    ST.projectionPoints = resp.data?.points || [];
+    renderProjection();
+  } catch (err) { console.error(err); }
+  hideSpinner('proj-spinner');
+});
+
+document.getElementById("proj-unit").addEventListener("change", async function() {
+  if (!ST.activeCaseId) return;
+  showSpinner('proj-spinner');
+  try {
+    const method = document.getElementById("proj-method").value;
+    const resp = await api(`/api/v2/vsumvis/projection/${ST.activeCaseId}?unit=${this.value}&method=${method}`);
+    ST.projectionPoints = resp.data?.points || [];
+    renderProjection();
+  } catch (err) { console.error(err); }
+  hideSpinner('proj-spinner');
+});
+
+// ====================================================================
+// KEYBOARD
+// ====================================================================
+document.addEventListener("keydown", function(ev) {
+  if (ev.key === "Escape") {
+    document.getElementById("evidence-panel").classList.remove("visible");
+    ST.selectedEventId = null;
+    clearHighlight();
+    updateProjectionSelection();
+    renderDetailTable();
+  }
+  if (ev.key === " " && document.activeElement === document.body) {
+    ev.preventDefault();
+    document.getElementById("btn-play").click();
+  }
+});
+
+// ====================================================================
+// BOTTOM PANEL MODE SWITCHING
+// ====================================================================
+document.querySelectorAll(".bottom-mode-btn").forEach(btn => {
+  btn.addEventListener("click", function() {
+    ST.bottomViewMode = this.dataset.mode;
+    document.querySelectorAll(".bottom-mode-btn").forEach(b => b.classList.remove("active"));
+    this.classList.add("active");
+    document.getElementById("bottom-title").textContent =
+      this.dataset.mode === "score" ? "Sequential Frames View" :
+      this.dataset.mode === "timeline" ? "Timeline View" : "Multimodal View";
+    renderBottomView();
+  });
+});
+
+function renderBottomView() {
+  const svgContainer = document.querySelector("#seq-body");
+  const emptyEl = document.getElementById("seq-empty");
+  if (!svgContainer || !emptyEl) return;
+  if (ST.bottomViewMode === "score") {
+    svgContainer.style.display = "";
+    emptyEl.style.display = "none";
+    renderScoreView();
+  } else if (ST.bottomViewMode === "timeline") {
+    renderTimelineView();
+  } else {
+    renderMultimodalView();
+  }
+}
+
+// ── SCORE VIEW (formerly renderSequenceView) ──
+function renderScoreView() {
+  // Identical to original renderSequenceView — kept for backward compat
+  _renderSequenceViewImpl();
+}
+
+// ── TIMELINE VIEW ──
+function renderTimelineView() {
+  const svgContainer = document.querySelector("#seq-body");
+  const emptyEl = document.getElementById("seq-empty");
+
+  // Prefer API timeline data, fallback to segments + verified
+  const td = ST.timelineData;
+  const tracksData = td?.tracks || [];
+  const alignments = td?.alignments || [];
+  const transcripts = (td?.transcripts?.length > 0) ? td.transcripts : ST.transcript;
+  const frameSeries = td?.frame_series || [];
+
+  const segs = ST.timelineSegments;
+  const vevents = ST.verifiedEvents;
+
+  if (!tracksData.length && !alignments.length && !segs.length && !vevents.length) {
+    svgContainer.style.display = "none";
+    emptyEl && (emptyEl.style.display = "");
+    return;
+  }
+  svgContainer.style.display = "";
+  emptyEl && (emptyEl.style.display = "none");
+
+  const container = document.getElementById("seq-svg").parentElement;
+  const W = container.clientWidth || 1000;
+  const H = container.clientHeight || 250;
+
+  const svg = d3.select("#seq-svg");
+  svg.selectAll("*").remove();
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("width", W).attr("height", H);
+
+  const margin = {top: 8, right: 24, bottom: 28, left: 120};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+
+  // Time extent from all sources
+  const allStarts = [
+    ...(tracksData.flatMap(t => t.segments||[]).map(s => s.start_time||0)),
+    ...vevents.map(v => v.window_start||0),
+    ...transcripts.map(t => t.start_time||0),
+  ];
+  const allEnds = [
+    ...(tracksData.flatMap(t => t.segments||[]).map(s => s.end_time||0)),
+    ...vevents.map(v => v.window_end||0),
+    ...transcripts.map(t => t.end_time||0),
+  ];
+  const tMin = d3.min(allStarts) || 0;
+  const tMax = d3.max(allEnds) || 100;
+  const xScale = d3.scaleLinear().domain([tMin, tMax]).range([0, iW]);
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // ── Y tracks ──
+  const trackDefs = [
+    { key: "visual", label: "Visual Behavior" },
+    { key: "text",   label: "Transcript" },
+    { key: "align",  label: "Alignment" },
+    { key: "verify", label: "Verification" },
+  ];
+  const trackH = 22;
+  const trackGap = 3;
+  const totalTH = trackDefs.length * trackH + (trackDefs.length - 1) * trackGap;
+  const yScale = d3.scalePoint().domain(trackDefs.map(t => t.key)).range([0, totalTH]);
+
+  const neededH = margin.top + totalTH + margin.bottom + 10;
+  if (neededH > H) {
+    svg.attr("height", neededH);
+    svg.attr("viewBox", `0 0 ${W} ${neededH}`);
+  }
+
+  // Track labels
+  for (const tr of trackDefs) {
+    const y = yScale(tr.key);
+    g.append("text").attr("x", -6).attr("y", y + trackH / 2 + 4)
+      .attr("text-anchor", "end").attr("fill", "var(--text-mid)")
+      .style("font-size", "9px").style("font-weight", "500").text(tr.label);
+    g.append("line").attr("x1", 0).attr("x2", iW).attr("y1", y + trackH).attr("y2", y + trackH)
+      .attr("stroke", "var(--border-light)").attr("stroke-width", 0.5);
+  }
+
+  // ── Helper to draw a timeline rectangle ──
+  function drawTimelineRect(y, d, colorFn, extraClass) {
+    const x0 = xScale(d.start_time || d.window_start || d.start || 0);
+    const x1 = xScale(d.end_time || d.window_end || d.end || (d.start_time||0) + 0.2);
+    const w = Math.max(2, x1 - x0);
+    const sid = getStableId(d);
+    const sel = isSelected(d);
+    g.append("rect")
+      .attr("x", x0).attr("y", y).attr("width", w).attr("height", trackH - 3)
+      .attr("rx", 2).attr("class", extraClass || "")
+      .attr("fill", typeof colorFn === "function" ? colorFn(d) : colorFn)
+      .attr("fill-opacity", sel ? 1 : 0.6)
+      .attr("stroke", sel ? "var(--text-strong)" : "none")
+      .attr("stroke-width", sel ? 1.5 : 0)
+      .style("cursor", "pointer")
+      .on("mouseover", function(ev) {
+        d3.select(this).attr("fill-opacity", 1).attr("stroke", "var(--text-strong)").attr("stroke-width", 1.5);
+        showTimelineTooltip(ev, d);
+      })
+      .on("mouseout", function() {
+        const s = isSelected(d);
+        d3.select(this).attr("fill-opacity", s ? 1 : 0.6).attr("stroke", s ? "var(--text-strong)" : "none").attr("stroke-width", s ? 1.5 : 0);
+        hideTooltip();
+      })
+      .on("click", function() {
+        seekVideo(d.t_center || d.start_time || d.query_time || 0);
+        updateSelection([d]);
+        ST.selectedEventId = sid;
+        updateDetailTableSelection(sid);
+        showEvidencePanelById(sid);
+      });
+  }
+
+  // ── Track 0: Visual Behavior segments ──
+  const visY = yScale("visual") + 2;
+  if (tracksData.length) {
+    for (const tr of tracksData.slice(0, 30)) {
+      for (const s of (tr.segments || []).slice(0, 100)) {
+        drawTimelineRect(visY, s, ST.behaviorColor(s.behavior || s.behavior_code || "unknown"));
+      }
+    }
+  } else {
+    for (const seg of segs.slice(0, 1500)) {
+      drawTimelineRect(visY, seg, ST.behaviorColor(seg.semantic_label_en || seg.behavior_code || "unknown"));
+    }
+  }
+
+  // ── Track 1: Transcript ──
+  const txtY = yScale("text") + 2;
+  for (const t of transcripts.slice(0, 500)) {
+    g.append("rect")
+      .attr("x", xScale(t.start_time || t.start || 0)).attr("y", txtY)
+      .attr("width", Math.max(2, xScale(t.end_time || t.end || (t.start_time||0) + 0.5) - xScale(t.start_time || t.start || 0)))
+      .attr("height", trackH - 3).attr("rx", 2)
+      .attr("fill", "#7C83FF").attr("fill-opacity", 0.35).attr("stroke", "none")
+      .on("mouseover", function(ev) { d3.select(this).attr("fill-opacity", 0.7); showTimelineTooltip(ev, { ...t, kind: "transcript" }); })
+      .on("mouseout", function() { d3.select(this).attr("fill-opacity", 0.35); hideTooltip(); });
+  }
+
+  // ── Track 2: Alignments ──
+  const alignY = yScale("align") + 2;
+  for (const a of alignments.slice(0, 500)) {
+    drawTimelineRect(alignY, a, d => ST.statusColor(d.match_status || "unverified"));
+  }
+
+  // ── Track 3: Verification events ──
+  const vfyY = yScale("verify") + 2;
+  for (const ve of vevents.slice(0, 500)) {
+    drawTimelineRect(vfyY, ve, d => ST.statusColor(d.match_label || "unverified"));
+  }
+
+  // ── BrushX ──
+  const brush = d3.brushX()
+    .extent([[0, 0], [iW, totalTH]])
+    .on("brush", function(ev) {
+      if (!ev.selection) return;
+      const [bx0, bx1] = ev.selection;
+      ST.brushExtent = [xScale.invert(bx0), xScale.invert(bx1)];
+      throttledTimelineBrush();
+      filterByBrushDebounced();
+    })
+    .on("end", function(ev) {
+      if (!ev.selection) {
+        ST.brushExtent = [0, Infinity];
+        updateSelection([]);
+        filterByBrushDebounced();
+      }
+    });
+  g.append("g").attr("class", "brush").call(brush);
+
+  // X axis
+  g.append("g").attr("transform", `translate(0,${totalTH})`)
+    .call(d3.axisBottom(xScale).ticks(8).tickFormat(d => `${d.toFixed(0)}s`))
+    .selectAll("text").style("font-size", "9px").attr("fill", "var(--text-dim)");
+
+  // Playhead
+  const playhead = g.append("line")
+    .attr("class", "playhead")
+    .attr("y1", 0).attr("y2", totalTH)
+    .attr("stroke", "#2563eb").attr("stroke-width", 2)
+    .attr("visibility", "hidden")
+    .attr("pointer-events", "none");
+
+  // Click-to-seek on timeline background
+  svg.on("click", function(ev) {
+    if (ev.target && ev.target.closest && ev.target.closest(".brush,.playhead")) return;
+    const [mx] = d3.pointer(ev, g.node());
+    if (mx < 0 || mx > iW) return;
+    seekVideo(xScale.invert(mx));
+  });
+
+  // Restore playhead position after view switch
+  if (isFinite(ST.currentTime) && ST.currentTime > 0) {
+    const px = xScale(ST.currentTime);
+    playhead.attr("x1", px).attr("x2", px).attr("visibility", "visible");
+  }
+
+  ST._seqState = { xScale, playhead, iW, totalTH, g };
+}
+
+const throttledTimelineBrush = throttle(() => {
+  const [lo, hi] = ST.brushExtent;
+  const eids = new Set();
+  for (const seg of ST.timelineSegments) {
+    const t = seg.t_center || seg.start_time || 0;
+    if (t >= lo && t <= hi) eids.add(getStableId(seg));
+  }
+  for (const ve of ST.verifiedEvents) {
+    const t = ve.query_time || ve.window_start || 0;
+    if (t >= lo && t <= hi) eids.add(getStableId(ve));
+  }
+  updateSelection([...eids]);
+}, 80);
+
+function showTimelineTooltip(ev, d) {
+  const tip = document.getElementById("tooltip");
+  const st = d.match_status || d.match_label || "unverified";
+  const cls = st === "match" ? "tt-match" : st === "uncertain" ? "tt-uncertain" : "tt-mismatch";
+  if (d.kind === "transcript") {
+    const t0 = d.start_time ?? d.start ?? 0;
+    const t1 = d.end_time ?? d.end ?? 0;
+    tip.innerHTML = `
+      <div class="tt-row"><span class="tt-label">Transcript</span><span>${t0.toFixed(1)}-${t1.toFixed(1)}s</span></div>
+      <div style="margin-top:3px;font-size:10px;line-height:1.4;max-width:280px;">${d.text || '-'}</div>`;
+  } else {
+    const t0 = d.start_time ?? d.window_start ?? 0;
+    const t1 = d.end_time ?? d.window_end ?? 0;
+    tip.innerHTML = `
+      <div class="tt-row"><span class="tt-label">ID</span><span>${d.event_id || d.segment_id || d.query_id || '-'}</span></div>
+      <div class="tt-row"><span class="tt-label">Time</span><span>${t0.toFixed(1)}-${t1.toFixed(1)}s</span></div>
+      <div class="tt-row"><span class="tt-label">Status</span><span class="${cls}">${st}</span></div>
+      <div class="tt-row"><span class="tt-label">Track</span><span>${d.track_id ?? '-'}</span></div>
+      <div class="tt-row"><span class="tt-label">Behavior</span><span>${d.semantic_label_en || d.behavior_code || '-'}</span></div>
+      <div class="tt-row"><span class="tt-label">Fusion</span><span>C_VIS ${((d.c_vis ?? d.c_visual ?? 0)).toFixed(3)}  C_TXT ${((d.c_txt ?? d.c_text ?? 0)).toFixed(3)}</span></div>`;
+  }
+  tip.style.left = (ev.clientX + 18) + "px";
+  tip.style.top  = (ev.clientY - 8) + "px";
+  tip.style.opacity = 1;
+}
+
+// ── MULTIMODAL VIEW ──
+function renderMultimodalView() {
+  const svgContainer = document.querySelector("#seq-body");
+  const emptyEl = document.getElementById("seq-empty");
+  svgContainer.style.display = "";
+  emptyEl.style.display = "none";
+
+  const container = document.getElementById("seq-svg").parentElement;
+  const W = container.clientWidth || 1000;
+  const H = container.clientHeight || 250;
+
+  const svg = d3.select("#seq-svg");
+  svg.selectAll("*").remove();
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("width", W).attr("height", H);
+
+  // Use ST.timelineData.frame_series if available, else fallback
+  const series = (ST.timelineData?.frame_series?.length > 0)
+    ? ST.timelineData.frame_series.map((s, i) => ({
+        t: s.time || i,
+        score_model: s.score_model ?? 0.5,
+        score_reference: s.score_ref ?? 0.5,
+        c_visual: s.c_vis ?? 0,
+        c_text: s.c_txt ?? 0,
+        align_score: getAlignScore(s),
+        uq_track: s.uq ?? 0,
+      }))
+    : ST.sequenceSeries;
+
+  if (!series || series.length === 0) {
+    svgContainer.style.display = "none";
+    emptyEl && (emptyEl.style.display = "");
+    return;
+  }
+
+  const margin = {top: 8, right: 92, bottom: 28, left: 48};
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+
+  const tMin = d3.min(series, d => d.t) || 0;
+  const tMax = d3.max(series, d => d.t) || 100;
+  const xScale = d3.scaleLinear().domain([tMin, tMax]).range([0, iW]);
+
+  const yScale = d3.scaleLinear().domain([0, 1.05]).range([iH, 0]);
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const lines = [
+    { key: "score_model", label: "Score Model", color: FEATURE_COLORS.score_model, dash: "" },
+    { key: "score_reference", label: "Score Ref", color: "#9CA3AF", dash: "4,3" },
+    { key: "c_visual", label: "C_VIS", color: FEATURE_COLORS.c_vis, dash: "" },
+    { key: "c_text", label: "C_TXT", color: FEATURE_COLORS.c_txt, dash: "" },
+    { key: "align_score", label: "ALIGN", color: FEATURE_COLORS.align_score, dash: "" },
+    { key: "uq_track", label: "UQ", color: FEATURE_COLORS.uq, dash: "3,2" },
+  ];
+
+  const legendG = g.append("g").attr("transform", `translate(${iW + 8}, 8)`);
+  for (const [idx, ln] of lines.entries()) {
+    const vals = series.map(s => ({t: s.t, v: s[ln.key] !== undefined ? s[ln.key] : 0}));
+    const lineFn = d3.line().x(d => xScale(d.t)).y(d => yScale(d.v)).curve(d3.curveStepAfter);
+    g.append("path").datum(vals)
+      .attr("fill", "none").attr("stroke", ln.color)
+      .attr("stroke-width", ln.key === "score_model" ? 1.8 : 1.1)
+      .attr("stroke-dasharray", ln.dash)
+      .attr("d", lineFn);
+
+    legendG.append("line")
+      .attr("x1", 0).attr("x2", 12)
+      .attr("y1", idx * 12).attr("y2", idx * 12)
+      .attr("stroke", ln.color)
+      .attr("stroke-width", ln.key === "score_model" ? 2 : 1.2)
+      .attr("stroke-dasharray", ln.dash);
+    legendG.append("text")
+      .attr("x", 16).attr("y", idx * 12 + 3)
+      .attr("fill", ln.color).style("font-size", "8px").style("font-weight", "500")
+      .text(ln.label);
+  }
+
+  // Playhead
+  const playhead = g.append("line")
+    .attr("class", "playhead")
+    .attr("y1", 0).attr("y2", iH)
+    .attr("stroke", "#2563eb").attr("stroke-width", 2)
+    .attr("visibility", "hidden")
+    .attr("pointer-events", "none");
+
+  // Brush
+  const brush = d3.brushX()
+    .extent([[0, 0], [iW, iH]])
+    .on("brush", function(ev) {
+      if (!ev.selection) return;
+      const [bx0, bx1] = ev.selection;
+      ST.brushExtent = [xScale.invert(bx0), xScale.invert(bx1)];
+      filterByBrushDebounced();
+    })
+    .on("end", function(ev) {
+      if (!ev.selection) {
+        ST.brushExtent = [0, Infinity];
+        resetBrushFilterDebounced();
+      }
+    });
+  g.append("g").attr("class", "brush").call(brush);
+
+  // Click-to-seek
+  svg.on("click", function(ev) {
+    if (ev.target && ev.target.closest && ev.target.closest(".brush")) return;
+    const [mx] = d3.pointer(ev, g.node());
+    if (mx < 0 || mx > iW) return;
+    seekVideo(xScale.invert(mx));
+  });
+
+  // X axis
+  g.append("g").attr("transform", `translate(0,${iH})`)
+    .call(d3.axisBottom(xScale).ticks(8).tickFormat(d => `${d.toFixed(0)}s`))
+    .selectAll("text").style("font-size", "9px").attr("fill", "var(--text-dim)");
+
+  g.append("text").attr("x", -38).attr("y", 6)
+    .attr("fill", "var(--text-mid)").style("font-size", "8px")
+    .text("Value");
+
+  // Restore playhead position after view switch
+  if (isFinite(ST.currentTime) && ST.currentTime > 0) {
+    const px = xScale(ST.currentTime);
+    playhead.attr("x1", px).attr("x2", px).attr("visibility", "visible");
+  }
+
+  ST._seqState = { xScale, playhead, iW, iH, g };
+}
+
+// ── UPDATE SUMMARY CHIPS WITH SELECTION STATS ──
+function updateSummaryChipsWithSelection() {
+  const selPts = getSelectedPoints();
+  const info = ST.caseData?.case_info || {};
+  const ms = info.match_summary || {};
+
+  if (hasSelection() && selPts.length > 0) {
+    document.getElementById("chip-contract").textContent = selPts.length;
+    document.getElementById("chip-contract").parentElement.className = "summary-chip contract-OK";
+    document.getElementById("chip-contract").parentElement.querySelector(".label").textContent = "SELECTED";
+
+    const matchN = selPts.filter(p => p.verification_status === "match").length;
+    const uncertainN = selPts.filter(p => p.verification_status === "uncertain").length;
+    const mismatchN = selPts.filter(p => p.verification_status === "mismatch").length;
+    const n = selPts.length;
+    document.getElementById("chip-match").textContent = n ? (100*matchN/n).toFixed(0)+"%" : "–";
+    document.getElementById("chip-uncertain").textContent =
+      `${n ? (100*uncertainN/n).toFixed(0)+'%' : '–'} / ${n ? (100*mismatchN/n).toFixed(0)+'%' : '–'}`;
+    document.getElementById("chip-verified").textContent = n;
+    document.getElementById("chip-students").textContent = new Set(selPts.map(p => p.track_id)).size;
+  } else {
+    document.getElementById("chip-contract").textContent = info.contract_status || "–";
+    document.getElementById("chip-contract").parentElement.className = `summary-chip contract-${info.contract_status || 'WARN'}`;
+    document.getElementById("chip-contract").parentElement.querySelector(".label").textContent = "Contract";
+    document.getElementById("chip-match").textContent = ms.match_rate != null ? ms.match_rate + "%" : "–";
+    document.getElementById("chip-uncertain").textContent =
+      `${ms.uncertain_rate != null ? ms.uncertain_rate + '%' : '–'} / ${ms.mismatch_rate != null ? ms.mismatch_rate + '%' : '–'}`;
+    document.getElementById("chip-verified").textContent = info.verified_event_count ?? "–";
+    document.getElementById("chip-students").textContent = info.student_count ?? "–";
+  }
+}
+
+// ====================================================================
+// RESIZE (debounced)
+// ====================================================================
+const _resizeRedraw = debounce(() => {
+  if (!ST.showAblation) {
+    renderProjection();
+    renderParallelCoordinates();
+    renderBottomView();
+  }
+}, 250);
+
+window.addEventListener("resize", _resizeRedraw);
+
+// Boot
+init();
+</script>
+</body>
+</html>

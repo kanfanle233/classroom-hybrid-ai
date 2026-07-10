@@ -1,21 +1,64 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.pytest_cache/
+.tmp_pytest*/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 
-# Large / generated
-data/
-output/
-runs/
-models/
-docs/
-# Weights & media
+# Local datasets, model weights and generated runs
+/data/
+/models/
+/output/
+/runs/
 *.pt
+*.pth
 *.onnx
 *.engine
+*.safetensors
+*.ckpt
+*.joblib
+*.pkl
 *.mp4
 *.avi
 *.mkv
+*.mov
+*.wav
 
-# Secrets
-.env
-.env.*
+# Large generated documentation and reports
+/codex_reports/
+/scripts/codex_reports/
+/docs/*
+!/docs/guides/
+!/docs/guides/*.md
+/paper_experiments/run_logs/
+paper_experiments/**/runtime_logs/
+paper_experiments/gold/agent_300_workbench/
+paper_experiments/gold/ai_agent_runs/
+paper_experiments/gold/annotation_workbench*/evidence/
+paper_experiments/gold/annotation_workbench_wave*/evidence/
+*.zip
+
+# Tool caches and local configuration
+.ultralytics/
+.claude/
+.vscode/
+.idea/
+.DS_Store
+._*
+__MACOSX/
+*.log
+*.pid
+*.tmp
+tmp/
+temp/
+outputs_tmp/
+
+# Local audit/debug leftovers
+core_log.txt
+git_log*.txt
+git_status.txt
+task_*.txt
+_tmp_*

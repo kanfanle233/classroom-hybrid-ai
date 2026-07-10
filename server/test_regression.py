@@ -12,6 +12,7 @@ Usage:
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ from pathlib import Path
 # Ensure the project root is on sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
+os.environ.setdefault("YOLOV11_CASE_FIXTURE_ROOT", str(_PROJECT_ROOT / "tests" / "fixtures" / "server_cases"))
 
 from fastapi.testclient import TestClient
 from server.app import app

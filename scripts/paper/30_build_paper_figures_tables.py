@@ -12,7 +12,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 
 try:
     import torch
@@ -1013,6 +1012,12 @@ def main() -> None:
         help="Fail fast when chart_selection_matrix consistency check fails.",
     )
     args = parser.parse_args()
+
+    try:
+        global sns
+        import seaborn as sns
+    except ImportError as exc:
+        parser.error(f"paper figure generation requires seaborn: {exc}")
 
     root = Path(args.root).resolve()
     chart_dir = _resolve_path(root, args.out_chart_dir)

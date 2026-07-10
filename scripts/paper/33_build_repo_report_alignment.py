@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import statistics
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 REPORT_DATE = "20260423"
 OUT_DIR = ROOT / "docs" / "assets" / "tables" / f"repo_alignment_{REPORT_DATE}"
 REPORT_PATH = ROOT / "docs" / f"repo_report_alignment_{REPORT_DATE}.md"
@@ -115,7 +116,7 @@ def resolve_path(raw: str) -> Path:
 
 SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
     {
-        "script_path": "scripts/09_run_pipeline.py",
+        "script_path": "run_pipeline.py",
         "category": "主线流程",
         "subsystem": "pipeline_orchestration",
         "role": "总编排入口，串起 pose / track / action / ASR / align / verify / timeline",
@@ -124,7 +125,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/02_export_keypoints_jsonl.py",
+        "script_path": "classroom_pipeline/pipeline/02_export_keypoints_jsonl.py",
         "category": "主线流程",
         "subsystem": "vision_pose",
         "role": "YOLO pose 关键点导出",
@@ -133,7 +134,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/03_track_and_smooth.py",
+        "script_path": "classroom_pipeline/pipeline/03_track_and_smooth.py",
         "category": "主线流程",
         "subsystem": "tracking",
         "role": "跟踪与轨迹平滑",
@@ -142,7 +143,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/03c_estimate_track_uncertainty.py",
+        "script_path": "classroom_pipeline/pipeline/03c_estimate_track_uncertainty.py",
         "category": "主线流程",
         "subsystem": "uq",
         "role": "轨迹级不确定性估计",
@@ -151,7 +152,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/05_slowfast_actions.py",
+        "script_path": "classroom_pipeline/pipeline/05_slowfast_actions.py",
         "category": "主线流程",
         "subsystem": "action_recognition",
         "role": "动作片段识别 / rules 回退",
@@ -160,7 +161,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/06_asr_whisper_to_jsonl.py",
+        "script_path": "classroom_pipeline/pipeline/06_asr_whisper_to_jsonl.py",
         "category": "主线流程",
         "subsystem": "text_asr",
         "role": "Whisper ASR + transcript 非空兜底",
@@ -169,7 +170,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/06b_event_query_extraction.py",
+        "script_path": "classroom_pipeline/pipeline/06b_event_query_extraction.py",
         "category": "主线流程",
         "subsystem": "text_event_query",
         "role": "事件查询抽取",
@@ -178,7 +179,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/xx_align_multimodal.py",
+        "script_path": "classroom_pipeline/pipeline/xx_align_multimodal.py",
         "category": "主线流程",
         "subsystem": "multimodal_alignment",
         "role": "固定窗 / UQ 自适应窗跨模态对齐",
@@ -187,7 +188,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/07_dual_verification.py",
+        "script_path": "classroom_pipeline/pipeline/07_dual_verification.py",
         "category": "主线流程",
         "subsystem": "verification",
         "role": "query + align + verifier -> verified_events.jsonl",
@@ -196,61 +197,61 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/15_run_paper_experiment.py",
+        "script_path": "classroom_pipeline/pipeline/08_coherence_diagnosis.py",
+        "category": "主线流程",
+        "subsystem": "multimodal_coherence",
+        "role": "验证后多模态一致性与冲突类型诊断",
+        "primary_outputs": "verified_events.coherence_v3.jsonl",
+        "inspection_note": "主编排器 step73 调用，输出旁路 v3 事件契约。",
+        "include_in_primary_table": "yes",
+    },
+    {
+        "script_path": "scripts/experiments/16_run_rear_row_sr_ablation.py",
         "category": "实验分支",
-        "subsystem": "paper_experiment_runner",
-        "role": "统一封装论文实验分支运行与 summary 输出",
-        "primary_outputs": "metrics.json; summary.md; artifacts_manifest.json",
-        "inspection_note": "直接读取脚本头部，确认写 formal metrics / manifest / summary。",
+        "subsystem": "rear_row_sr_ablation",
+        "role": "后排 ROI 超分辨率消融运行器",
+        "primary_outputs": "rear-row SR ablation case outputs",
+        "inspection_note": "当前保留的后排小目标增强实验入口。",
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/16_run_paper_baseline.py",
-        "category": "对照/基线",
-        "subsystem": "paper_baseline",
-        "role": "baseline 打包与 smoke 验证",
-        "primary_outputs": "output/paper_experiments/baseline/*",
-        "inspection_note": "作为 baseline 行为链路的统一包装。",
-        "include_in_primary_table": "yes",
-    },
-    {
-        "script_path": "scripts/17_run_exp_c_negative_sampling.py",
+        "script_path": "scripts/experiments/17_build_sr_ablation_paper_summary.py",
         "category": "实验分支",
-        "subsystem": "negative_sampling",
-        "role": "负样本构造消融",
-        "primary_outputs": "metrics_compare.csv; summary.md",
-        "inspection_note": "文件存在且与 output/exp_c_negative_sampling 对应。",
+        "subsystem": "rear_row_sr_summary",
+        "role": "汇总后排超分消融的论文表格与摘要",
+        "primary_outputs": "sr_ablation_paper_summary.json; summary tables",
+        "inspection_note": "与 16 号消融运行器成对使用。",
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/18_run_exp_d_semantic_embedding.py",
+        "script_path": "scripts/experiments/18_build_rear_row_gt_template.py",
         "category": "实验分支",
-        "subsystem": "semantic_embedding",
-        "role": "rule / embedding / hybrid 语义评分比较",
-        "primary_outputs": "metrics.json; text_score_compare.csv",
-        "inspection_note": "文件存在且与 output/exp_d_semantic_embedding 对应。",
+        "subsystem": "rear_row_ground_truth",
+        "role": "生成后排评测 GT 模板",
+        "primary_outputs": "rear-row GT template",
+        "inspection_note": "为 19 号后排指标评估提供人工标注模板。",
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/19_run_exp_e_object_evidence.py",
+        "script_path": "scripts/experiments/19_eval_rear_row_metrics.py",
         "category": "实验分支",
-        "subsystem": "object_evidence",
-        "role": "物体辅证歧义动作分析",
-        "primary_outputs": "metrics.json; ambiguity_pairs_report.csv; flip_cases.jsonl",
-        "inspection_note": "文件存在且与 output/exp_e_object_evidence 对应。",
+        "subsystem": "rear_row_metrics",
+        "role": "计算后排检测与跟踪指标",
+        "primary_outputs": "rear_row_metrics.json; metric tables",
+        "inspection_note": "读取 18 号 GT 与流水线产物形成可复现评估。",
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/24_generate_real_gold_from_tasks.py",
-        "category": "gold/标注",
-        "subsystem": "gold_generation",
-        "role": "从人工任务生成 gold_events.real.jsonl 并校验 schema",
-        "primary_outputs": "gold_events.real.jsonl; gold_validation_report.json",
-        "inspection_note": "直接读取脚本头部，确认 jsonschema 校验与人工字段约束。",
+        "script_path": "scripts/experiments/25_split_test_set.py",
+        "category": "数据划分",
+        "subsystem": "held_out_split",
+        "role": "构造可复现测试集划分",
+        "primary_outputs": "test split manifests",
+        "inspection_note": "数据划分工具，不参与在线主流程。",
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/30_build_paper_figures_tables.py",
+        "script_path": "scripts/paper/30_build_paper_figures_tables.py",
         "category": "图表生成",
         "subsystem": "paper_auto_figures",
         "role": "从 run logs / exp outputs 生成 paper_auto 图表表格",
@@ -259,7 +260,7 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "scripts/31_build_paper_figures_curated.py",
+        "script_path": "scripts/paper/31_build_paper_figures_curated.py",
         "category": "图表生成",
         "subsystem": "paper_curated_figures",
         "role": "从全仓遍历后筛选 paper_curated 图表",
@@ -268,12 +269,12 @@ SCRIPT_CATEGORY_SPECS: List[Dict[str, Any]] = [
         "include_in_primary_table": "yes",
     },
     {
-        "script_path": "tools/build_pages_demo.py",
+        "script_path": "server/build_frontend_data_bundle.py",
         "category": "展示系统",
         "subsystem": "pages_demo",
-        "role": "构建 GitHub Pages 静态 demo 包",
-        "primary_outputs": "docs/data/cases/*; docs/assets/videos/*; manifest.json",
-        "inspection_note": "直接读取脚本头部，确认复制 timeline/projection/transcript/video 等展示资产。",
+        "role": "从单个 case 构建前端数据包",
+        "primary_outputs": "frontend_data_manifest.json; data/assets bundle",
+        "inspection_note": "读取 pipeline manifest 与标准产物，生成轻量展示数据。",
         "include_in_primary_table": "yes",
     },
     {
@@ -401,13 +402,13 @@ FIGURE_SPECS: List[Dict[str, Any]] = [
     },
     {
         "artifact_id": "demo_index_html",
-        "path": "docs/index.html",
+        "path": "server/templates/index.html",
         "artifact_type": "html_page",
         "recommended_section": "系统展示",
         "quality_tier": "engineering_only",
         "paper_ready": "no",
-        "evidence_basis": "Pages demo 入口",
-        "notes": "不是论文图，但能支持录屏与系统展示。",
+        "evidence_basis": "FastAPI 主页面模板",
+        "notes": "不是论文图，但能支持本地服务录屏与系统展示。",
     },
     {
         "artifact_id": "demo_dashboard_html",
@@ -601,28 +602,28 @@ LOCAL_REPORT_ALIGNMENT_ROWS: List[Dict[str, Any]] = [
         "claim": "核心主线（pose -> track/UQ -> action -> ASR -> query -> align -> dual verify -> timeline）",
         "research_report_position": "已实现",
         "local_workspace_status": "已实现且有本地结果产物",
-        "evidence": "scripts/09_run_pipeline.py; scripts/07_dual_verification.py; scripts/10_visualize_timeline.py; paper_experiments/real_cases/random6_20260420_mainline_v3_summary.json",
+        "evidence": "run_pipeline.py; classroom_pipeline/pipeline/07_dual_verification.py; classroom_pipeline/pipeline/10_visualize_timeline.py; paper_experiments/real_cases/random6_20260420_mainline_v3_summary.json",
         "recommendation": "可写入方法链路与系统流程，但不要写成新 backbone。",
     },
     {
         "claim": "03d_train_track_variance_head / 05c / 05d / 06c / 15_run_paper_experiment / docs/js/data_source.js 在远程分支未确认",
         "research_report_position": "本地已有但远程抓取未确认",
         "local_workspace_status": "本地已存在",
-        "evidence": "scripts/03d_train_track_variance_head.py; scripts/05c_behavior_det_to_actions.py; scripts/05d_merge_action_sources.py; scripts/06c_asr_openai_to_jsonl.py; scripts/15_run_paper_experiment.py; docs/js/data_source.js",
+        "evidence": "classroom_pipeline/verifier/variance_head.py; classroom_pipeline/pipeline/05c_behavior_det_to_actions.py; classroom_pipeline/pipeline/05d_merge_action_sources.py; classroom_pipeline/pipeline/06c_asr_openai_to_jsonl.py; classroom_pipeline/orchestrator_legacy.py; docs/js/data_source.js",
         "recommendation": "说明本地工作区已明显超过当时的远程可见状态。",
     },
     {
         "claim": "behavior_det 增强分支",
         "research_report_position": "仅弱确认/待实验",
         "local_workspace_status": "本地稳定运行 30/30（behavior_aug_v1）",
-        "evidence": "paper_experiments/real_cases/random6_20260420_behavior_aug_v1_summary.json; scripts/05c_behavior_det_to_actions.py",
+        "evidence": "paper_experiments/real_cases/random6_20260420_behavior_aug_v1_summary.json; classroom_pipeline/pipeline/05c_behavior_det_to_actions.py",
         "recommendation": "可以写为本地增强分支，但结果暂不当主结论。",
     },
     {
         "claim": "OpenAI / API ASR 多后端",
         "research_report_position": "远程分支未完整确认",
         "local_workspace_status": "本地具备 DashScope + OpenAI + Whisper 脚本和消融日志",
-        "evidence": "scripts/06_api_asr_realtime.py; scripts/06c_asr_openai_to_jsonl.py; docs/asr_*.md; paper_experiments/run_logs/asr_ablation_*.csv",
+        "evidence": "classroom_pipeline/pipeline/06_api_asr_realtime.py; classroom_pipeline/pipeline/06c_asr_openai_to_jsonl.py; docs/asr_*.md; paper_experiments/run_logs/asr_ablation_*.csv",
         "recommendation": "可以写为后端消融与工程扩展，不宜写成最终性能创新。",
     },
     {
@@ -636,7 +637,7 @@ LOCAL_REPORT_ALIGNMENT_ROWS: List[Dict[str, Any]] = [
         "claim": "完整、稳定、可部署的前后端系统",
         "research_report_position": "不能写成已完成",
         "local_workspace_status": "存在 FastAPI 原型与 Pages demo，但不等于生产系统",
-        "evidence": "server/app.py; tools/build_pages_demo.py; docs/index.html; docs/paper_v2_dashboard.html",
+        "evidence": "server/app.py; server/build_frontend_data_bundle.py; docs/paper_v2_dashboard.html",
         "recommendation": "可写为展示原型/录屏支撑系统。",
     },
     {
@@ -1158,17 +1159,18 @@ def build_file_scope_summary(
         for item in LOCAL_REPORT_ALIGNMENT_ROWS
         if "本地已存在" in item["local_workspace_status"] or "本地具备" in item["local_workspace_status"]
     ]
+    moved_paths = {
+        "scripts/03d_train_track_variance_head.py": "classroom_pipeline/verifier/variance_head.py",
+        "scripts/05c_behavior_det_to_actions.py": "classroom_pipeline/pipeline/05c_behavior_det_to_actions.py",
+        "scripts/05d_merge_action_sources.py": "classroom_pipeline/pipeline/05d_merge_action_sources.py",
+        "scripts/06c_asr_openai_to_jsonl.py": "classroom_pipeline/pipeline/06c_asr_openai_to_jsonl.py",
+        "scripts/15_run_paper_experiment.py": "classroom_pipeline/orchestrator_legacy.py",
+        "docs/js/data_source.js": "docs/js/data_source.js",
+    }
     missing_file_mentions = [
-        raw
-        for raw in [
-            "scripts/03d_train_track_variance_head.py",
-            "scripts/05c_behavior_det_to_actions.py",
-            "scripts/05d_merge_action_sources.py",
-            "scripts/06c_asr_openai_to_jsonl.py",
-            "scripts/15_run_paper_experiment.py",
-            "docs/js/data_source.js",
-        ]
-        if raw in deep_report_text and (ROOT / raw).exists()
+        current
+        for reported, current in moved_paths.items()
+        if reported in deep_report_text and (ROOT / current).exists()
     ]
     return {
         "generated_at": now_iso(),
@@ -1611,9 +1613,29 @@ def build_report(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build the repository-to-paper alignment report.")
+    parser.add_argument(
+        "--deep-report",
+        default=str(DEEP_REPORT_PATH),
+        help="Optional external deep-research report used only for reconciliation notes.",
+    )
+    parser.add_argument(
+        "--strict-deep-report",
+        action="store_true",
+        help="Fail when --deep-report does not exist instead of continuing without it.",
+    )
+    args = parser.parse_args()
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    deep_report_text = read_text(DEEP_REPORT_PATH)
+    deep_report_path = Path(args.deep_report).expanduser()
+    if deep_report_path.exists():
+        deep_report_text = read_text(deep_report_path)
+    elif args.strict_deep_report:
+        raise FileNotFoundError(f"deep report not found: {deep_report_path}")
+    else:
+        print(f"[WARN] deep report not found; reconciliation notes will be empty: {deep_report_path}")
+        deep_report_text = ""
     scan_summary = read_json(SCAN_SUMMARY_PATH)
     script_index_rows = read_csv_rows(SCRIPT_INDEX_PATH)
     merged_summary = read_json(MAINLINE_MERGED_SUMMARY_PATH)

@@ -1,9 +1,0 @@
-﻿RUN_NAME=official_yolo11s_detect_bgtest1
-PID=34360
-STARTED_AT=2026-04-24T19:17:28
-REPO_ROOT=F:\PythonProject\pythonProject\YOLOv11
-PYTHON=F:\miniconda\envs\pytorch_env\python.exe
-YOLO_CONFIG_DIR=F:\PythonProject\pythonProject\YOLOv11\.ultralytics
-LOG_PATH=F:\PythonProject\pythonProject\YOLOv11\official_yolo_finetune_compare\reports\runtime_logs\official_yolo11s_detect_bgtest1_20260424_191728.log
-EPOCHS=1
-WORKERS=0

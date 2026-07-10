@@ -1,6 +1,0 @@
-F:\miniconda\envs\pytorch_env\lib\site-packages\requests\__init__.py:86: RequestsDependencyWarning: Unable to find acceptable character detection dependency (chardet or charset_normalizer).
-  warnings.warn(
-[DONE] transcript: F:\PythonProject\pythonProject\YOLOv11\output\asr_ablation\random6_small_cuda_hybrid_recover\whisper\front\front__23081\transcript.jsonl
-[INFO] segments: 10
-[INFO] whisper config: model=small device=cuda compute_type=float16 beam_size=5 vad_filter=0
-[INFO] added_dll_paths=2

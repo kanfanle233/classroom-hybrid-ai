@@ -1,0 +1,9 @@
+{
+  "student_count": 1,
+  "students": [
+    {
+      "student_id": "S01",
+      "track_id": 1
+    }
+  ]
+}

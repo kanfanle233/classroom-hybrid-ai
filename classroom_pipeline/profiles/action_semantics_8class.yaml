@@ -1,0 +1,16 @@
+{
+  "taxonomy_version": "smart_classroom_semantics_v1",
+  "mode": "compatible_enrich",
+  "display_language": "bilingual",
+  "fallback_behavior_code": "tt",
+  "classes": [
+    {"behavior_code": "tt", "label_zh": "抬头听课", "label_en": "head-up listening", "semantic_id": "listen", "semantic_label_zh": "听课", "semantic_label_en": "listen", "aliases": ["tt", "listen", "listening", "head-up listening", "抬头听课", "听课"]},
+    {"behavior_code": "dx", "label_zh": "低头写字", "label_en": "writing", "semantic_id": "write", "semantic_label_zh": "写字", "semantic_label_en": "write", "aliases": ["dx", "write", "writing", "note", "低头写字", "写字"]},
+    {"behavior_code": "dk", "label_zh": "低头看书", "label_en": "reading", "semantic_id": "read", "semantic_label_zh": "看书", "semantic_label_en": "read", "aliases": ["dk", "read", "reading", "book", "低头看书", "看书"]},
+    {"behavior_code": "zt", "label_zh": "转头", "label_en": "turning head", "semantic_id": "turn_head", "semantic_label_zh": "转头", "semantic_label_en": "turn head", "aliases": ["zt", "turn_head", "turning_head", "distract", "转头", "分心"]},
+    {"behavior_code": "xt", "label_zh": "小组讨论", "label_en": "group discussion", "semantic_id": "group_discussion", "semantic_label_zh": "小组讨论", "semantic_label_en": "group discussion", "aliases": ["xt", "group_discussion", "discussion", "小组讨论", "讨论"]},
+    {"behavior_code": "js", "label_zh": "举手", "label_en": "raise hand", "semantic_id": "raise_hand", "semantic_label_zh": "举手", "semantic_label_en": "raise hand", "aliases": ["js", "raise_hand", "raising_hand", "hand_raise", "举手"]},
+    {"behavior_code": "zl", "label_zh": "站立", "label_en": "standing", "semantic_id": "stand", "semantic_label_zh": "站立", "semantic_label_en": "stand", "aliases": ["zl", "stand", "standing", "站立", "起立"]},
+    {"behavior_code": "jz", "label_zh": "教师互动", "label_en": "teacher interaction", "semantic_id": "teacher_interaction", "semantic_label_zh": "教师互动", "semantic_label_en": "teacher interaction", "aliases": ["jz", "teacher_interaction", "teacher guidance", "教师互动", "教师指导"]}
+  ]
+}

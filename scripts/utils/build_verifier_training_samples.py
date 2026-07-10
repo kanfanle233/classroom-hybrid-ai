@@ -7,8 +7,8 @@ from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from contracts.schemas import validate_verifier_training_sample_record, write_jsonl
-from verifier.dataset import build_negative_sampling_samples
+from classroom_pipeline.contracts.schemas import validate_verifier_sample_record, write_jsonl
+from classroom_pipeline.verifier.dataset import build_training_samples, convert_to_contract_samples
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -20,9 +20,18 @@ def _safe_float(value: Any, default: float) -> float:
 
 def _validate_rows(rows: List[Dict[str, Any]]) -> None:
     for i, row in enumerate(rows):
-        ok, msg = validate_verifier_training_sample_record(row)
+        ok, msg = validate_verifier_sample_record(row)
         if not ok:
             raise ValueError(f"invalid training sample at idx={i}: {msg}")
+
+
+def _assign_split(rows: List[Dict[str, Any]], train_ratio: float) -> None:
+    """Assign a deterministic train/val split without changing sample order."""
+    ratio = max(0.0, min(1.0, float(train_ratio)))
+    for row in rows:
+        sample_id = str(row.get("sample_id", ""))
+        bucket = sum((index + 1) * ord(char) for index, char in enumerate(sample_id)) % 10_000
+        row["split"] = "train" if bucket < int(ratio * 10_000) else "val"
 
 
 def main() -> None:
@@ -41,20 +50,26 @@ def main() -> None:
     actions = Path(args.actions).resolve()
     out = Path(args.out).resolve()
 
-    rows = build_negative_sampling_samples(
+    raw_rows = build_training_samples(
         event_queries_path=event_queries,
         aligned_path=aligned,
         actions_path=actions,
-        train_ratio=_safe_float(args.train_ratio, 0.8),
-        shift_seconds=(_safe_float(args.shift_1, 1.0), _safe_float(args.shift_2, 2.0)),
     )
+    rows = convert_to_contract_samples(raw_rows)
     if not rows:
         raise RuntimeError("no samples generated")
 
+    _assign_split(rows, _safe_float(args.train_ratio, 0.8))
     _validate_rows(rows)
     write_jsonl(out, rows)
 
-    neg_counter = Counter(str(r.get("negative_type", "unknown")) for r in rows)
+    if (float(args.shift_1), float(args.shift_2)) != (1.0, 2.0):
+        print(
+            "[WARN] --shift_1/--shift_2 are retained for CLI compatibility; "
+            "the current contract generator derives temporal negatives from aligned overlap."
+        )
+
+    neg_counter = Counter(str(r.get("negative_kind", "positive")) or "positive" for r in rows)
     split_counter = Counter(str(r.get("split", "unknown")) for r in rows)
     print(f"[DONE] samples: {out}")
     print(f"[INFO] total={len(rows)} by_negative_type={dict(neg_counter)} by_split={dict(split_counter)}")

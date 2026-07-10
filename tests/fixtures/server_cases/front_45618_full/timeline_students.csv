@@ -1,0 +1,2 @@
+segment_id,event_id,track_id,student_id,start_time,end_time,semantic_id,semantic_label_en,confidence,verification_status
+e_000000_00,e_000000_00,1,S01,0.0,2.0,raise_hand,raise hand,0.88,mismatch

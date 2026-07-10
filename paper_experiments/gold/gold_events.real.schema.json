@@ -121,7 +121,17 @@
     },
     "review_status": {
       "type": "string",
-      "enum": ["draft", "peer_reviewed", "adjudicated", "rejected"]
+      "enum": ["draft", "needs_adjudication", "peer_reviewed", "adjudicated", "final", "rejected"]
+    },
+    "batch_id": {
+      "type": "string"
+    },
+    "review_round": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "adjudicator": {
+      "type": "string"
     },
     "notes": {
       "type": "string"

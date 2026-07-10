@@ -34,6 +34,12 @@ from server.evidence_schema import (
     normalize_verified_event, normalize_event_query, normalize_align_candidate,
     _pick as _schema_pick, _safe_float as _schema_safe_float, _safe_int as _schema_safe_int,
 )
+from server.registry import (
+    CaseRegistry, ArtifactResolver, GoldLoader, GoldBackedEvaluator, GoldReadinessAnalyzer,
+    CaseManifestV1, GoldEventV1, VerifierEvalReportV1, ArtifactStatus,
+    _load_gold_events, _validate_gold,
+)
+from server.pipeline_manifest import PipelineManifestManager, StepValidator
 
 # 灏濊瘯瀵煎叆 Levenshtein锛屽鏋滄病鏈夊氨鐢ㄧ畝鍖栫増
 try:
@@ -67,14 +73,16 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(getattr(paths_mod, "PROJECT_ROOT", BASE_DIR)).resolve()
 OUTPUT_DIR = Path(getattr(paths_mod, "OUTPUT_DIR", PROJECT_ROOT / "output")).resolve()
 DATA_DIR = Path(getattr(paths_mod, "DATA_DIR", PROJECT_ROOT / "data")).resolve()
+_CASE_FIXTURE_ROOT_ENV = os.environ.get("YOLOV11_CASE_FIXTURE_ROOT", "").strip()
+CASE_FIXTURE_ROOT = Path(_CASE_FIXTURE_ROOT_ENV).resolve() if _CASE_FIXTURE_ROOT_ENV else None
 VIDEO_DIR = (DATA_DIR / "videos").resolve()
 DOCS_DIR = (PROJECT_ROOT / "docs").resolve()
 PAPER_TABLE_DIR = (DOCS_DIR / "assets" / "tables" / "paper_d3_selected").resolve()
 PAPER_CHART_DIR = (DOCS_DIR / "assets" / "charts" / "paper_d3_selected").resolve()
 PAPER_VIDEO_DIR = (DOCS_DIR / "assets" / "videos").resolve()
 ASSETS_DIR = (DOCS_DIR / "assets").resolve()
-YOLO_PAPER_DIR = (PROJECT_ROOT / "YOLO论文").resolve()
-YOLO_PAPER_PACKAGE_DIR = (YOLO_PAPER_DIR / "paper_package_20260426").resolve()
+YOLO_PAPER_DIR = (DOCS_DIR / "paper").resolve()
+YOLO_PAPER_PACKAGE_DIR = (YOLO_PAPER_DIR / "outline" / "paper_package_20260426").resolve()
 YOLO_PAPER_DEMO_DIR = (YOLO_PAPER_PACKAGE_DIR / "06_demo_materials").resolve()
 PAPER_MAINLINE_OUTPUT_DIR = (
     OUTPUT_DIR / "codex_reports" / "run_full_paper_mainline_001" / "full_integration_001"
@@ -109,14 +117,16 @@ MEDIA_SEARCH_DIRS = [
     PROJECT_ROOT / "output" / "codex_reports",
     PROJECT_ROOT / "output" / "frontend_bundle",
 ]
+if CASE_FIXTURE_ROOT is not None and CASE_FIXTURE_ROOT.exists():
+    MEDIA_SEARCH_DIRS.append(CASE_FIXTURE_ROOT)
 
-# 浣犵殑鍓嶇妯℃澘涓€鑸湪 web_viz/templates锛涘鏋滄病鏈夊氨鍥為€€鍒伴」鐩牴鐩綍
-TEMPLATE_DIR = (PROJECT_ROOT / "web_viz" / "templates")
+# Frontend templates live with the backend service.
+TEMPLATE_DIR = (PROJECT_ROOT / "server" / "templates")
 if not TEMPLATE_DIR.exists():
     TEMPLATE_DIR = PROJECT_ROOT
 
-# 闈欐€佽祫婧愮洰褰曪細web_viz/static 鎴栭」鐩牴
-STATIC_DIR = (PROJECT_ROOT / "web_viz" / "static")
+# Static assets live with the backend service when present.
+STATIC_DIR = (PROJECT_ROOT / "server" / "static")
 if not STATIC_DIR.exists():
     STATIC_DIR = PROJECT_ROOT
 
@@ -3169,6 +3179,8 @@ def _is_vsumvis_skip_subdir(path: Path) -> bool:
 def _iter_vsumvis_dirs() -> List[Path]:
     """Return valid VSumVis data directories from output, codex reports, and bundles."""
     roots: List[Path] = []
+    if CASE_FIXTURE_ROOT is not None and CASE_FIXTURE_ROOT.exists():
+        roots.append(CASE_FIXTURE_ROOT)
     if FRONT_REPORTS_DIR.exists():
         roots.append(FRONT_REPORTS_DIR)
     if BUNDLE_DIR.exists():
@@ -3259,6 +3271,21 @@ def _public_case_id(case_dir: Path) -> str:
 def _find_front_case_dir(case_id: str) -> Optional[Path]:
     if not VALID_CASE_ID_RE.fullmatch(case_id):
         return None
+    canonical_fixture_aliases = {
+        "front_45618_full": OUTPUT_DIR / "0034",
+        "front_45618_sliced": OUTPUT_DIR / "0034",
+        "run_full_paper_mainline_001": OUTPUT_DIR / "0034",
+    }
+    if CASE_FIXTURE_ROOT is not None and CASE_FIXTURE_ROOT.exists():
+        fixture_case = CASE_FIXTURE_ROOT / "front_45618_full"
+        canonical_fixture_aliases.update({
+            "front_45618_full": fixture_case,
+            "front_45618_sliced": fixture_case,
+            "run_full_paper_mainline_001": fixture_case,
+        })
+    alias_target = canonical_fixture_aliases.get(case_id)
+    if alias_target is not None and _is_vsumvis_case_dir(alias_target):
+        return alias_target
     if case_id in PAPER_MAINLINE_ALIASES and PAPER_MAINLINE_OUTPUT_DIR.exists():
         return PAPER_MAINLINE_OUTPUT_DIR
     for child in _iter_vsumvis_dirs():
@@ -3282,6 +3309,12 @@ def _front_url(path: Path) -> str:
 
 
 def _vsumvis_data_source(case_dir: Path) -> str:
+    if CASE_FIXTURE_ROOT is not None:
+        try:
+            case_dir.resolve().relative_to(CASE_FIXTURE_ROOT.resolve())
+            return "test_fixture"
+        except Exception:
+            pass
     try:
         case_dir.resolve().relative_to(BUNDLE_DIR.resolve())
         return "frontend_bundle"
@@ -4167,6 +4200,17 @@ def get_canonical_cases():
         if current is None or _case_dir_quality(d) > _case_dir_quality(Path(current["_dir"])):
             entry["_dir"] = str(d)
             cases_by_id[entry["case_id"]] = entry
+    for alias in ("front_45618_full", "front_45618_sliced", "run_full_paper_mainline_001"):
+        d = _find_front_case_dir(alias)
+        if d is None:
+            continue
+        entry = _build_vsumvis_case_entry(d)
+        ctx = _resolve_case_context(alias)
+        entry["case_id"] = alias
+        entry["data_source"] = ctx.get("data_source", "unknown") if ctx else "unknown"
+        entry["case_kind"] = _front_case_kind(d)
+        entry["_dir"] = str(d)
+        cases_by_id[alias] = entry
     cases = sorted(cases_by_id.values(), key=lambda c: (str(c.get("case_kind", "")), str(c.get("case_id", ""))))
     for case in cases:
         case.pop("_dir", None)
@@ -5211,8 +5255,1702 @@ async def front_vsumvis_page(request: Request):
     """VSumVis-style classroom behavior visual analysis dashboard."""
     tpl = TEMPLATE_DIR / "front_vsumvis.html"
     if tpl.exists():
-        return templates.TemplateResponse("front_vsumvis.html", {"request": request})
+        return FileResponse(str(tpl), media_type="text/html")
     raise HTTPException(404, "front_vsumvis.html template not found")
+
+
+# =========================================================
+# 9b) Registry-backed APIs: case manifests, gold eval, evidence v2
+# =========================================================
+
+def _get_registry() -> CaseRegistry:
+    return CaseRegistry(PROJECT_ROOT)
+
+
+@app.get("/api/cases/v2")
+def get_cases_v2():
+    """List all cases with structured manifests (artifact status, warnings)."""
+    registry = _get_registry()
+    manifests = registry.list_cases()
+    out = []
+    for m in manifests:
+        out.append({
+            "case_id": m.case_id,
+            "video_id": m.video_id,
+            "view_code": m.view_code,
+            "status": m.status,
+            "total_events": m.total_events,
+            "gold_event_count": m.gold_event_count,
+            "artifacts": m.artifact_summary(),
+            "missing_artifacts": m.missing_artifacts(),
+            "warnings": m.warnings,
+            "video_path": m.video_path,
+        })
+    return {
+        "status": "success",
+        "cases": out,
+        "total": len(out),
+        "source_files": {
+            "registry": "server/registry.py",
+            "output_dir": str(OUTPUT_DIR),
+        },
+    }
+
+
+@app.get("/api/case/{case_id}/manifest/v2")
+def get_case_manifest_v2(case_id: str):
+    """Structured manifest for a single case with per-artifact status."""
+    registry = _get_registry()
+    m = registry.get_case(case_id)
+    if m is None:
+        raise HTTPException(404, f"Case not found: {case_id}")
+    return {
+        "status": "success",
+        "case_id": m.case_id,
+        "video_id": m.video_id,
+        "view_code": m.view_code,
+        "case_status": m.status,
+        "total_events": m.total_events,
+        "gold_event_count": m.gold_event_count,
+        "artifacts": [
+            {
+                "key": a.key,
+                "found": a.found,
+                "file_name": a.file_name,
+                "file_path": a.file_path,
+                "size_bytes": a.size_bytes,
+                "warnings": a.warnings,
+            }
+            for a in m.artifacts
+        ],
+        "missing_artifacts": m.missing_artifacts(),
+        "present_artifacts": m.present_artifacts(),
+        "warnings": m.warnings,
+        "video_path": m.video_path,
+        "source_dir": m.source_dir,
+    }
+
+
+class EvidenceService:
+    """Build structured evidence payloads for review and blinded user-study modes."""
+
+    def __init__(self, project_root: Path):
+        self.project_root = project_root
+        self.gold_loader = GoldLoader(project_root / "paper_experiments" / "gold")
+
+    def build(self, case_id: str, event_id: str, mode: str = "review") -> Dict[str, Any]:
+        mode = (mode or "review").strip().lower()
+        if mode not in {"review", "blinded"}:
+            raise HTTPException(400, "mode must be 'review' or 'blinded'")
+
+        registry = _get_registry()
+        m = registry.get_case(case_id)
+        if m is None:
+            raise HTTPException(404, f"Case not found: {case_id}")
+
+        resolver = registry.get_resolver(case_id)
+        if resolver is None:
+            payload = self._missing_output(case_id, event_id)
+            payload.update({
+                "mode": mode,
+                "asr_quality": None,
+                "pipeline_step_status": self._pipeline_step_status(m),
+                "gold_label_status": self._gold_label_status(case_id, event_id, mode),
+            })
+            return payload
+
+        payload = self._build_from_resolver(case_id, event_id, mode, m, resolver)
+        if mode == "blinded":
+            return self._blind_payload(payload)
+        return payload
+
+    @staticmethod
+    def _missing_output(case_id: str, event_id: str) -> Dict[str, Any]:
+        return {
+            "status": "missing_output",
+            "case_id": case_id,
+            "event_id": event_id,
+            "message": f"No output directory found for case {case_id}. Run the pipeline first.",
+            "source_files": {},
+            "warnings": ["output directory not found"],
+            "query": None,
+            "selected": None,
+            "align_candidates": [],
+            "media": None,
+        }
+
+    def _build_from_resolver(
+        self,
+        case_id: str,
+        event_id: str,
+        mode: str,
+        m: CaseManifestV1,
+        resolver: ArtifactResolver,
+    ) -> Dict[str, Any]:
+        # Read all data sources
+        queries = resolver.read_jsonl("event_queries_fusion_v2")
+        if not queries:
+            queries = resolver.read_jsonl("event_queries")
+        verified_v3 = resolver.read_jsonl("verified_events_coherence_v3")
+        verified = verified_v3 if verified_v3 else resolver.read_jsonl("verified_events")
+        align_data = resolver.read_json("align_multimodal") or []
+        if not isinstance(align_data, list):
+            align_data = []
+        asr_report = resolver.read_json("asr_quality_report")
+
+        # Source files that exist
+        source_files: Dict[str, str] = {}
+        for key in ("verified_events_coherence_v3", "verified_events", "event_queries_fusion_v2", "event_queries",
+                    "align_multimodal", "asr_quality_report", "transcript"):
+            p = resolver.get_path(key)
+            if p:
+                source_files[key] = str(p)
+
+        warnings: List[str] = list(m.warnings)
+
+        # Find the target event
+        query = None
+        for q in queries:
+            qid = str(q.get("event_id") or q.get("query_id") or "")
+            if qid == event_id or _event_id_matches(qid, event_id):
+                query = q
+                break
+
+        ve = None
+        for v in verified:
+            vid = str(v.get("event_id") or v.get("query_id") or "")
+            if vid == event_id or _event_id_matches(vid, event_id):
+                ve = v
+                break
+
+        if query is None and ve is None:
+            return {
+                "status": "event_not_found",
+                "mode": mode,
+                "case_id": case_id,
+                "event_id": event_id,
+                "message": f"No query or verified event found for event_id={event_id} in case {case_id}.",
+                "source_files": source_files,
+                "warnings": warnings + [f"event {event_id} not found in queries or verified_events"],
+                "query": None,
+                "selected": None,
+                "align_candidates": [],
+                "media": None,
+                "asr_quality": self._asr_quality_status(asr_report),
+                "pipeline_step_status": self._pipeline_step_status(m),
+                "gold_label_status": self._gold_label_status(case_id, event_id, mode),
+            }
+
+        # Build query block
+        q_row = query if isinstance(query, dict) else {}
+        ve_row = ve if isinstance(ve, dict) else {}
+        matched_event_id = str(
+            (q_row.get("event_id") or q_row.get("query_id") or "")
+            if q_row else (ve_row.get("event_id") or ve_row.get("query_id") or "")
+        )
+        ve_window = ve_row.get("window") if isinstance(ve_row.get("window"), dict) else {}
+        query_block = {
+            "event_id": matched_event_id or event_id,
+            "query_text": str(_first_value(q_row.get("query_text"), ve_row.get("query_text"), default="")),
+            "query_source": str(q_row.get("source", "") or ve_row.get("query_source", "") or "unknown"),
+            "is_visual_fallback": str(q_row.get("source", "")).lower() == "visual_fallback",
+            "query_time": _safe_float(_first_value(
+                q_row.get("t_center"), q_row.get("timestamp"), q_row.get("query_time"),
+                ve_row.get("query_time"), ve_row.get("timestamp"), ve_row.get("t_center"),
+                default=0,
+            ), 0.0),
+            "window_start": _safe_float(_first_value(
+                q_row.get("start"), q_row.get("window_start"),
+                ve_window.get("start"), ve_row.get("window_start"),
+                default=0,
+            ), 0.0),
+            "window_end": _safe_float(_first_value(
+                q_row.get("end"), q_row.get("window_end"),
+                ve_window.get("end"), ve_row.get("window_end"),
+                default=0,
+            ), 0.0),
+            "confidence": _safe_float(q_row.get("confidence", 0), 0.0),
+            "event_type": str(_first_value(q_row.get("event_type"), ve_row.get("event_type"), default="")),
+        }
+
+        # Build selected block
+        selected_track_id = int(_safe_float(ve_row.get("track_id", -1), -1.0)) if ve_row else -1
+        selected_evidence = ve_row.get("evidence") if isinstance(ve_row.get("evidence"), dict) else {}
+        selected_block = {
+            "track_id": selected_track_id,
+            "student_id": ve_row.get("student_id", f"S{selected_track_id:02d}") if ve_row else "",
+            "label": str(ve_row.get("match_label") or ve_row.get("label") or "unverified") if ve_row else "unverified",
+            "p_match": _safe_float(ve_row.get("p_match", 0), 0.0) if ve_row else 0,
+            "p_mismatch": _safe_float(ve_row.get("p_mismatch", 0), 0.0) if ve_row else 0,
+            "reliability_score": _safe_float(ve_row.get("reliability_score", 0), 0.0) if ve_row else 0,
+            "uncertainty": _safe_float(ve_row.get("uncertainty", 0), 0.0) if ve_row else 0,
+            "visual_score": _safe_float(selected_evidence.get("visual_score", 0), 0.0) if ve_row else 0,
+            "text_score": _safe_float(selected_evidence.get("text_score", 0), 0.0) if ve_row else 0,
+            "uq_score": _safe_float(selected_evidence.get("uq_score", 0), 0.0) if ve_row else 0,
+        }
+        coherence_block, evidence_refs = self._coherence_payload(
+            case_id=case_id,
+            event_id=matched_event_id or event_id,
+            ve_row=ve_row,
+            query_row=q_row,
+            align_data=align_data,
+            asr_report=asr_report,
+        )
+        observation_card = self._observation_card_gate(selected_block, coherence_block)
+
+        # Build alignment candidates block
+        align_candidates: List[Dict[str, Any]] = []
+        for rec in align_data:
+            eid = str(rec.get("event_id") or rec.get("query_id") or "")
+            if not _event_id_matches(eid, matched_event_id or event_id):
+                continue
+            candidates = rec.get("candidates", [])
+            if not isinstance(candidates, list):
+                continue
+            scored = []
+            for c in candidates:
+                ov = _safe_float(c.get("overlap", 0), 0.0)
+                ac = _safe_float(c.get("action_confidence", 0), 0.0)
+                score = ov * 0.65 + ac * 0.35
+                scored.append((score, c))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for rank, (sc, c) in enumerate(scored, 1):
+                tid = int(_safe_float(c.get("track_id", -1), -1.0))
+                align_candidates.append({
+                    "track_id": tid,
+                    "student_id": f"S{tid:02d}",
+                    "action": str(c.get("action", "")),
+                    "semantic_id": str(c.get("semantic_id", "")),
+                    "start_time": _safe_float(c.get("start_time", 0), 0.0),
+                    "end_time": _safe_float(c.get("end_time", 0), 0.0),
+                    "overlap": _safe_float(c.get("overlap", 0), 0.0),
+                    "action_confidence": _safe_float(c.get("action_confidence", 0), 0.0),
+                    "uq_track": _safe_float(c.get("uq_track") or c.get("uq_score") or 0, 0.0),
+                    "is_selected": (tid == selected_track_id),
+                    "rank": rank,
+                    "composite_score": round(sc, 4),
+                })
+            break
+
+        if not align_candidates and "align_multimodal" in m.missing_artifacts():
+            warnings.append("align_multimodal not found - alignment candidates unavailable")
+
+        # Media block
+        ws = float(query_block["window_start"])
+        we = float(query_block["window_end"])
+        if we <= ws:
+            we = ws + 2.0
+        media_block = {
+            "video_url": f"/api/media/stream/{case_id}",
+            "start_sec": round(ws, 3),
+            "end_sec": round(we, 3),
+        }
+
+        return {
+            "status": "success",
+            "mode": mode,
+            "case_id": case_id,
+            "event_id": event_id,
+            "query": query_block,
+            "selected": selected_block,
+            "align_candidates": align_candidates,
+            "media": media_block,
+            "asr_quality": self._asr_quality_status(asr_report),
+            "pipeline_step_status": self._pipeline_step_status(m),
+            "gold_label_status": self._gold_label_status(case_id, matched_event_id or event_id, mode),
+            "coherence": coherence_block,
+            "evidence_refs": evidence_refs,
+            "observation_card": observation_card,
+            "source_files": source_files,
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def _coherence_payload(
+        *,
+        case_id: str,
+        event_id: str,
+        ve_row: Dict[str, Any],
+        query_row: Dict[str, Any],
+        align_data: List[Dict[str, Any]],
+        asr_report: Any,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        if isinstance(ve_row.get("coherence"), dict) and isinstance(ve_row.get("evidence_refs"), dict):
+            return ve_row["coherence"], ve_row["evidence_refs"]
+        if not ve_row:
+            return (
+                {
+                    "available": False,
+                    "reason": "verified_event_missing",
+                    "coherence_valid": False,
+                    "coherence_score": None,
+                    "conflict_type": "low_evidence",
+                    "quality_flags": ["no_candidates"],
+                },
+                {},
+            )
+        try:
+            import importlib
+            mod = importlib.import_module("classroom_pipeline.pipeline.08_coherence_diagnosis")
+            diagnose_rows = mod.diagnose_rows
+        except Exception as exc:
+            return (
+                {
+                    "available": False,
+                    "reason": f"diagnosis_unavailable:{type(exc).__name__}",
+                    "coherence_valid": False,
+                    "coherence_score": None,
+                    "conflict_type": "low_evidence",
+                    "quality_flags": ["no_candidates"],
+                },
+                {},
+            )
+        try:
+            diagnosed = diagnose_rows(
+                verified_rows=[ve_row],
+                align_rows=align_data,
+                query_rows=[query_row] if query_row else [],
+                asr_report=asr_report,
+                case_id=case_id,
+            )
+            if diagnosed:
+                row = diagnosed[0]
+                coherence = row.get("coherence") if isinstance(row.get("coherence"), dict) else {}
+                refs = row.get("evidence_refs") if isinstance(row.get("evidence_refs"), dict) else {}
+                coherence["available"] = True
+                coherence["source"] = "runtime_diagnosis"
+                return coherence, refs
+        except Exception as exc:
+            return (
+                {
+                    "available": False,
+                    "reason": f"diagnosis_failed:{type(exc).__name__}",
+                    "coherence_valid": False,
+                    "coherence_score": None,
+                    "conflict_type": "low_evidence",
+                    "quality_flags": ["no_candidates"],
+                },
+                {},
+            )
+        return (
+            {
+                "available": False,
+                "reason": "diagnosis_empty",
+                "coherence_valid": False,
+                "coherence_score": None,
+                "conflict_type": "low_evidence",
+                "quality_flags": ["no_candidates"],
+            },
+            {},
+        )
+
+    @staticmethod
+    def _observation_card_gate(selected: Dict[str, Any], coherence: Dict[str, Any]) -> Dict[str, Any]:
+        flags = coherence.get("quality_flags") if isinstance(coherence.get("quality_flags"), list) else []
+        blocking_flags = {
+            "high_uq",
+            "low_visual_confidence",
+            "track_fragmentation",
+            "low_asr_quality",
+            "object_conflict",
+            "low_alignment",
+            "no_candidates",
+        }
+        blocked_by: List[str] = []
+        if _safe_float(selected.get("p_match"), 0.0) < 0.6:
+            blocked_by.append("p_match_below_threshold")
+        if _safe_float(selected.get("reliability_score"), 0.0) < 0.6:
+            blocked_by.append("reliability_below_threshold")
+        if not bool(coherence.get("coherence_valid")):
+            blocked_by.append("coherence_invalid")
+        if coherence.get("coherence_score") is None or _safe_float(coherence.get("coherence_score"), 0.0) < 0.6:
+            blocked_by.append("coherence_below_threshold")
+        conflict_type = str(coherence.get("conflict_type", "low_evidence"))
+        if conflict_type != "none":
+            blocked_by.append(f"conflict:{conflict_type}")
+        for flag in flags:
+            if flag in blocking_flags:
+                blocked_by.append(f"quality:{flag}")
+        blocked_by = sorted(set(blocked_by))
+        return {
+            "eligible": not blocked_by,
+            "blocked_by": blocked_by,
+            "policy": "neutral_observation_only",
+        }
+
+    @staticmethod
+    def _asr_quality_status(asr_report: Any) -> Dict[str, Any]:
+        if not isinstance(asr_report, dict):
+            return {"available": False, "status": "missing"}
+        return {
+            "available": True,
+            "status": str(asr_report.get("status") or asr_report.get("quality_status") or "unknown"),
+            "segment_count": asr_report.get("segment_count", asr_report.get("accepted_segments")),
+            "raw_segment_count": asr_report.get("raw_segment_count", asr_report.get("raw_segments")),
+            "is_placeholder": str(asr_report.get("status", "")).lower() == "placeholder",
+        }
+
+    @staticmethod
+    def _pipeline_step_status(m: CaseManifestV1) -> Dict[str, Any]:
+        source_dir = m.metadata.get("source_case_dir", "")
+        if not source_dir:
+            return {"available": False, "status": "no_source", "steps": []}
+        manager = PipelineManifestManager(Path(source_dir))
+        manifest = manager.load()
+        if manifest is None:
+            return {
+                "available": False,
+                "status": "no_manifest",
+                "source_files": {"pipeline_manifest": str(manager.manifest_path)},
+                "steps": [],
+            }
+        return {
+            "available": True,
+            "status": manifest.status,
+            "run_id": manifest.run_id,
+            "failed_steps": [s.step_id for s in manifest.failed_steps()],
+            "source_files": {"pipeline_manifest": str(manager.manifest_path)},
+            "steps": [
+                {
+                    "step_id": s.step_id,
+                    "step_name": s.step_name,
+                    "status": s.status,
+                    "schema_valid": s.schema_valid,
+                    "record_count": s.record_count,
+                    "warnings": s.warnings,
+                    "error_message": s.error_message,
+                }
+                for s in manifest.steps
+            ],
+        }
+
+    def _gold_label_status(self, case_id: str, event_id: str, mode: str) -> Dict[str, Any]:
+        events = self.gold_loader.load("official")
+        for ev in events:
+            if ev.case_id == case_id and (ev.suggested_event_id == event_id or _event_id_matches(ev.suggested_event_id, event_id)):
+                if mode == "blinded":
+                    return {
+                        "available": True,
+                        "hidden": True,
+                        "reason": "blinded_mode",
+                        "review_status": ev.review_status,
+                    }
+                return {
+                    "available": True,
+                    "hidden": False,
+                    "review_status": ev.review_status,
+                    "match_label": ev.match_label,
+                    "gold_action": ev.gold_action,
+                    "gold_track_id": ev.gold_track_id,
+                    "gold_start": ev.gold_start,
+                    "gold_end": ev.gold_end,
+                    "batch_id": ev.batch_id,
+                    "review_round": ev.review_round,
+                    "adjudicator": ev.adjudicator,
+                }
+        return {"available": False, "hidden": mode == "blinded"}
+
+    @staticmethod
+    def _blind_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+        blinded = dict(payload)
+        blinded["mode"] = "blinded"
+        blinded["selected"] = {"hidden": True, "reason": "blinded_mode"}
+        blinded["coherence"] = {"hidden": True, "reason": "blinded_mode"}
+        blinded["evidence_refs"] = {"hidden": True, "reason": "blinded_mode"}
+        blinded["observation_card"] = {"hidden": True, "reason": "blinded_mode"}
+        blinded_candidates: List[Dict[str, Any]] = []
+        for candidate in payload.get("align_candidates", []) or []:
+            if not isinstance(candidate, dict):
+                continue
+            clean = dict(candidate)
+            for key in ("is_selected", "composite_score", "action_confidence", "uq_track"):
+                clean.pop(key, None)
+            blinded_candidates.append(clean)
+        blinded["align_candidates"] = blinded_candidates
+        gold_status = blinded.get("gold_label_status")
+        if isinstance(gold_status, dict) and gold_status.get("available"):
+            blinded["gold_label_status"] = {
+                "available": True,
+                "hidden": True,
+                "reason": "blinded_mode",
+                "review_status": gold_status.get("review_status"),
+            }
+        return blinded
+
+
+@app.get("/api/case/{case_id}/evidence/{event_id}/v2")
+def get_event_evidence_v2(
+    case_id: str,
+    event_id: str,
+    mode: str = Query("review", pattern="^(review|blinded)$"),
+):
+    """Structured evidence API with review/blinded modes."""
+    return EvidenceService(PROJECT_ROOT).build(case_id, event_id, mode=mode)
+
+
+@app.get("/api/v2/cases/{case_id}/events/{event_id}/evidence")
+def get_event_evidence_v2_canonical(
+    case_id: str,
+    event_id: str,
+    mode: str = Query("review", pattern="^(review|blinded)$"),
+):
+    """Canonical v2 evidence path for review and blinded user studies."""
+    return EvidenceService(PROJECT_ROOT).build(case_id, event_id, mode=mode)
+
+
+@app.get("/api/eval/gold-summary")
+def get_gold_summary(quality: str = Query("official")):
+    """Return summary of human gold annotations: count, label distribution, validation status."""
+    gold_dir = PROJECT_ROOT / "paper_experiments" / "gold"
+    loader = GoldLoader(gold_dir)
+    try:
+        summary = loader.summary(quality=quality)
+        visual_report = GoldReadinessAnalyzer(gold_dir, PROJECT_ROOT).visual_gold_report(quality=quality)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    quality_excluded_reason_distribution = summary.get("excluded_reason_distribution", {})
+    return {
+        "status": "success",
+        **summary,
+        "official_visual_gold": visual_report["official_visual_gold_count"],
+        "pipeline_evaluable_gold": visual_report["pipeline_evaluable_count"],
+        "excluded_from_verifier": visual_report["excluded_from_verifier"],
+        "quality_excluded_reason_distribution": quality_excluded_reason_distribution,
+        "excluded_reason_distribution": visual_report["excluded_reason_distribution"],
+        "verifier_excluded_reason_distribution": visual_report["excluded_reason_distribution"],
+        "visual_gold_distributions": visual_report["distributions"],
+        "source_files": {
+            "gold_jsonl": str(loader.gold_path),
+            "active_gold_jsonl": str(loader.gold_path),
+            "legacy_gold_jsonl": str(gold_dir / "gold_events.real.jsonl"),
+            "agent300_manifest": visual_report["source_files"]["agent300_manifest"],
+            "agent300_event_bridge_map": visual_report["source_files"]["agent300_event_bridge_map"],
+            "gold_schema": str(gold_dir / "gold_events.real.schema.json"),
+            "validation_report": str(gold_dir / "gold_validation_report.json"),
+        },
+    }
+
+
+@app.get("/api/eval/verifier-report")
+def get_verifier_eval_report(
+    case_ids: Optional[str] = Query(None),
+    quality: str = Query("official"),
+):
+    """Gold-backed verifier evaluation report.
+
+    Compares system predictions with human gold annotations.
+    Returns accuracy, precision, recall, F1, uncertain_ratio, candidate_recall, ECE, Brier.
+    """
+    gold_dir = PROJECT_ROOT / "paper_experiments" / "gold"
+    try:
+        evaluator = GoldBackedEvaluator(gold_dir, PROJECT_ROOT, quality=quality)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ids = [c.strip() for c in case_ids.split(",")] if case_ids else None
+    report = evaluator.evaluate(case_ids=ids)
+    return {
+        "status": "success",
+        "report_id": report.report_id,
+        "sample_count": report.sample_count,
+        "gold_event_count_requested": report.gold_event_count_requested,
+        "skipped_gold_event_count": report.skipped_gold_event_count,
+        "official_visual_gold_count": report.official_visual_gold_count,
+        "pipeline_evaluable_count": report.pipeline_evaluable_gold_count,
+        "excluded_from_verifier": report.excluded_from_verifier_count,
+        "excluded_reason_distribution": report.excluded_reason_distribution,
+        "accuracy": report.accuracy,
+        "precision": report.precision,
+        "recall": report.recall,
+        "f1": report.f1,
+        "uncertain_ratio": report.uncertain_ratio,
+        "candidate_recall": report.candidate_recall,
+        "ece": report.ece,
+        "brier": report.brier,
+        "label_distribution": report.label_distribution,
+        "quality_tier": report.quality_tier,
+        "baselines": [
+            {
+                "name": b.name,
+                "accuracy": b.accuracy,
+                "precision": b.precision,
+                "recall": b.recall,
+                "f1": b.f1,
+                "uncertain_ratio": b.uncertain_ratio,
+                "description": b.description,
+            }
+            for b in report.baselines
+        ],
+        "warnings": report.warnings,
+        "source_files": report.source_files,
+        "per_case_breakdown": report.per_case_breakdown,
+        "missing_output_cases": report.missing_output_cases,
+        "excluded_gold_events": report.excluded_gold_events,
+        "per_sample": [
+            {
+                "gold_event_id": s.gold.suggested_event_id,
+                "pipeline_event_id": s.pipeline_event_id,
+                "source_layer": s.source_layer,
+                "gold_case_id": s.gold.case_id,
+                "gold_match_label": s.gold.match_label,
+                "gold_action": s.gold.gold_action,
+                "gold_review_status": s.gold.review_status,
+                "gold_batch_id": s.gold.batch_id,
+                "gold_review_round": s.gold.review_round,
+                "predicted_label": s.predicted_label,
+                "predicted_track_id": s.predicted_track_id,
+                "predicted_action": s.predicted_action,
+                "confidence_match": s.confidence_match,
+                "reliability": s.reliability,
+                "uncertainty": s.uncertainty,
+                "gold_predicted_match": s.gold_predicted_match,
+                "gold_candidate_in_top_k": s.gold_candidate_in_top_k,
+                "top_k_candidate_count": s.top_k_candidate_count,
+            }
+            for s in report.per_sample
+        ],
+    }
+
+
+@app.get("/api/eval/visual-gold-report")
+def get_visual_gold_report(quality: str = Query("official")):
+    """Report official visual-gold coverage and verifier-readiness separately."""
+    gold_dir = PROJECT_ROOT / "paper_experiments" / "gold"
+    try:
+        report = GoldReadinessAnalyzer(gold_dir, PROJECT_ROOT).visual_gold_report(quality=quality)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "success",
+        **report,
+    }
+
+
+def _verifier_metrics_dict(report: VerifierEvalReportV1) -> Dict[str, Any]:
+    return {
+        "sample_count": report.sample_count,
+        "accuracy": report.accuracy,
+        "precision": report.precision,
+        "recall": report.recall,
+        "f1": report.f1,
+        "uncertain_ratio": report.uncertain_ratio,
+        "candidate_recall": report.candidate_recall,
+        "ece": report.ece,
+        "brier": report.brier,
+        "label_distribution": report.label_distribution,
+    }
+
+
+def _fast_reviewer_verifier_metrics(sample_count: int) -> Dict[str, Any]:
+    persisted = _read_json_file(EVAL_REPORTS_DIR / "gold_eval_v1.json", {})
+    metrics = persisted.get("metrics", {}) if isinstance(persisted, dict) else {}
+    label_distribution = persisted.get("label_distribution", {}) if isinstance(persisted, dict) else {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+    if not isinstance(label_distribution, dict):
+        label_distribution = {}
+    return {
+        "sample_count": int(sample_count),
+        "accuracy": _safe_float(metrics.get("accuracy"), 0.0),
+        "precision": _safe_float(metrics.get("precision"), 0.0),
+        "recall": _safe_float(metrics.get("recall"), 0.0),
+        "f1": _safe_float(metrics.get("f1"), 0.0),
+        "uncertain_ratio": _safe_float(metrics.get("uncertain_ratio"), 0.0),
+        "candidate_recall": _safe_float(metrics.get("candidate_recall"), 0.0),
+        "ece": _safe_float(metrics.get("ece"), 0.0),
+        "brier": _safe_float(metrics.get("brier"), 0.0),
+        "label_distribution": label_distribution,
+    }
+
+
+def _build_reviewer_response_markdown(report: Dict[str, Any]) -> str:
+    verifier = report["verifier_metrics"]
+    excluded = report["excluded_reason_distribution"]
+    lines = [
+        "# Reviewer Response Evaluation Summary",
+        "",
+        f"- Official visual gold: {report['official_visual_gold_count']}",
+        f"- Pipeline-evaluable gold: {report['pipeline_evaluable_count']}",
+        f"- Excluded from verifier: {report['excluded_from_verifier']}",
+        "",
+        "## Distributions",
+        "",
+        f"- Labels: `{json.dumps(report['label_distribution'], ensure_ascii=False)}`",
+        f"- Actions: `{json.dumps(report['action_distribution'], ensure_ascii=False)}`",
+        f"- Views: `{json.dumps(report['view_distribution'], ensure_ascii=False)}`",
+        f"- Quality tiers: `{json.dumps(report['quality_tier_distribution'], ensure_ascii=False)}`",
+        f"- Excluded reasons: `{json.dumps(excluded, ensure_ascii=False)}`",
+        "",
+        "## Verifier Metrics",
+        "",
+        f"- Sample count: {verifier['sample_count']}",
+        f"- Accuracy: {verifier['accuracy']}",
+        f"- Precision: {verifier['precision']}",
+        f"- Recall: {verifier['recall']}",
+        f"- F1: {verifier['f1']}",
+        f"- Candidate recall: {verifier['candidate_recall']}",
+        f"- ECE: {verifier['ece']}",
+        f"- Brier: {verifier['brier']}",
+        "",
+        (
+            "Verifier metrics are computed only on pipeline-evaluable gold. "
+            "The remaining official visual-gold events are reported with explicit exclusion reasons."
+        ),
+    ]
+    return "\n".join(lines)
+
+
+@app.get("/api/eval/reviewer-response-report")
+def get_reviewer_response_report(quality: str = Query("official")):
+    """Return a paper-ready JSON/Markdown summary for reviewer response."""
+    if not isinstance(quality, str):
+        quality = "official"
+    gold_dir = PROJECT_ROOT / "paper_experiments" / "gold"
+    try:
+        analyzer = GoldReadinessAnalyzer(gold_dir, PROJECT_ROOT)
+        visual_report = analyzer.visual_gold_report(quality=quality)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    distributions = visual_report["distributions"]
+    verifier_metrics = _fast_reviewer_verifier_metrics(int(visual_report["pipeline_evaluable_count"]))
+    report = {
+        "report_id": "reviewer_response_eval_report_v1",
+        "sample_size": visual_report["sample_size"],
+        "official_visual_gold_count": visual_report["official_visual_gold_count"],
+        "pipeline_evaluable_count": visual_report["pipeline_evaluable_count"],
+        "excluded_from_verifier": visual_report["excluded_from_verifier"],
+        "label_distribution": distributions["label"],
+        "action_distribution": distributions["action"],
+        "view_distribution": distributions["view"],
+        "quality_tier_distribution": distributions["quality_tier"],
+        "review_status_distribution": distributions["review_status"],
+        "excluded_reason_distribution": visual_report["excluded_reason_distribution"],
+        "verifier_metrics": verifier_metrics,
+        "source_files": {
+            **visual_report["source_files"],
+            "verifier_report": str(EVAL_REPORTS_DIR / "gold_eval_v1.json"),
+        },
+    }
+    report["markdown"] = _build_reviewer_response_markdown(report)
+    return {
+        "status": "success",
+        **report,
+    }
+
+
+@app.get("/api/eval/visual-gold-bridge")
+def get_visual_gold_bridge_report():
+    """Return agent300 visual-gold bridge coverage and verifier-readiness status."""
+    gold_dir = PROJECT_ROOT / "paper_experiments" / "gold"
+    analyzer = GoldReadinessAnalyzer(gold_dir, PROJECT_ROOT)
+    rows = [
+        row for row in analyzer.classify_events()
+        if row.get("source_layer") == "agent300_visual_gold"
+    ]
+    excluded_rows = [row for row in rows if not row.get("pipeline_evaluable")]
+    return {
+        "status": "success",
+        "report_id": "agent300_visual_gold_bridge_v2",
+        "sample_size": len(rows),
+        "verifier_evaluable_count": len(rows) - len(excluded_rows),
+        "verifier_blocked_count": len(excluded_rows),
+        "excluded_reason_distribution": _counter(excluded_rows, "excluded_reason"),
+        "pipeline_status_distribution": _counter(rows, "mapping_status"),
+        "view_distribution": _counter(rows, "view_code"),
+        "gold_action_distribution": _counter(rows, "gold_action"),
+        "quality_tier_distribution": _counter(rows, "quality_tier"),
+        "review_status_distribution": _counter(rows, "review_status"),
+        "source_files": {
+            "report": str(analyzer.bridge_map_path.parent / "agent300_visual_gold_bridge_report.json"),
+            "manifest": str(analyzer.visual_manifest_path),
+            "event_bridge_map": str(analyzer.bridge_map_path),
+            "pipeline_unblock_batch_001_040": str(analyzer.pipeline_unblock_path),
+        },
+    }
+
+
+def _agent300_bridge_dir() -> Path:
+    return PROJECT_ROOT / "paper_experiments" / "gold" / "agent_300_workbench" / "visual_gold_bridge"
+
+
+def _counter(rows: List[Dict[str, Any]], key: str, default: str = "unknown") -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(key) or default).strip() or default
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _path_exists_from_project(raw_path: Any) -> bool:
+    if not raw_path:
+        return False
+    try:
+        p = Path(str(raw_path))
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        return p.exists()
+    except Exception:
+        return False
+
+
+def _duration_stats(rows: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
+    durations: List[float] = []
+    for row in rows:
+        try:
+            start = float(row.get("gold_start"))
+            end = float(row.get("gold_end"))
+        except (TypeError, ValueError):
+            continue
+        if end >= start:
+            durations.append(round(end - start, 6))
+    if not durations:
+        return {"min": None, "median": None, "mean": None, "max": None}
+    durations.sort()
+    n = len(durations)
+    mid = n // 2
+    median = durations[mid] if n % 2 else (durations[mid - 1] + durations[mid]) / 2
+    return {
+        "min": round(durations[0], 3),
+        "median": round(median, 3),
+        "mean": round(sum(durations) / n, 3),
+        "max": round(durations[-1], 3),
+    }
+
+
+def _build_agent300_visual_only_report(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    sample_size = len(rows)
+    contact_sheet_existing = sum(1 for row in rows if _path_exists_from_project(row.get("contact_sheet_path")))
+    source_video_existing = sum(1 for row in rows if _path_exists_from_project(row.get("source_video_path")))
+    rows_with_existing_frames = 0
+    frame_path_count = 0
+    existing_frame_path_count = 0
+    for row in rows:
+        frame_paths = row.get("frame_paths") or []
+        if not isinstance(frame_paths, list):
+            frame_paths = []
+        existing_for_row = sum(1 for p in frame_paths if _path_exists_from_project(p))
+        frame_path_count += len(frame_paths)
+        existing_frame_path_count += existing_for_row
+        if existing_for_row:
+            rows_with_existing_frames += 1
+
+    blocked_count = sum(1 for row in rows if not bool(row.get("verifier_evaluable")))
+    required_bridge_counts: Dict[str, int] = {}
+    for row in rows:
+        required_bridge = row.get("required_bridge") or {}
+        if not isinstance(required_bridge, dict):
+            continue
+        for key, value in required_bridge.items():
+            if key == "required_artifacts":
+                continue
+            if value is True:
+                required_bridge_counts[key] = required_bridge_counts.get(key, 0) + 1
+
+    return {
+        "report_id": "agent300_visual_only_eval_v1",
+        "scope": "visual_gold_only_not_verifier_accuracy",
+        "sample_size": sample_size,
+        "verifier_metric_eligible": False,
+        "verifier_evaluable_count": sample_size - blocked_count,
+        "verifier_blocked_count": blocked_count,
+        "distributions": {
+            "view": _counter(rows, "view_code"),
+            "match_label": _counter(rows, "match_label"),
+            "gold_action": _counter(rows, "gold_action"),
+            "review_status": _counter(rows, "review_status"),
+            "quality_tier": _counter(rows, "quality_tier"),
+            "pipeline_status": _counter(rows, "pipeline_status"),
+        },
+        "time_window_duration_seconds": _duration_stats(rows),
+        "evidence_availability": {
+            "rows_with_contact_sheet": contact_sheet_existing,
+            "rows_with_any_frame": rows_with_existing_frames,
+            "rows_with_source_video": source_video_existing,
+            "frame_paths_total": frame_path_count,
+            "frame_paths_existing": existing_frame_path_count,
+        },
+        "verifier_readiness": {
+            "status": "blocked",
+            "blocked_reason": "agent300 visual gold uses e_agent300 IDs and evidence packages, but verifier requires real pipeline outputs and pipeline event IDs.",
+            "required_bridge_distribution": dict(sorted(required_bridge_counts.items())),
+            "required_artifacts": [
+                "verified_events.jsonl",
+                "event_queries.fusion_v2.jsonl",
+                "align_multimodal.json",
+                "asr_quality_report.json",
+            ],
+        },
+        "paper_use": {
+            "can_use_for": [
+                "official visual gold audit",
+                "sample size and label/action distribution",
+                "evidence quality report",
+                "blinded or second-pass review study",
+            ],
+            "cannot_use_for": [
+                "verifier accuracy",
+                "precision/recall/F1",
+                "candidate recall",
+                "ECE/Brier calibration",
+            ],
+        },
+        "next_unblockers": [
+            "Run the real pipeline for source videos that do not have output directories.",
+            "Build a mapping from e_agent300 event IDs to pipeline e_XXXXXX_XX event IDs using case_id and time windows.",
+            "Regenerate verifier-report after verified_events and align_multimodal artifacts exist.",
+        ],
+    }
+
+
+@app.get("/api/eval/agent300-visual-gold-report")
+def get_agent300_visual_gold_report():
+    """Return visual-only quality/readiness metrics for the agent300 official gold rows."""
+    gold_dir = PROJECT_ROOT / "paper_experiments" / "gold"
+    analyzer = GoldReadinessAnalyzer(gold_dir, PROJECT_ROOT)
+    rows = [
+        row for row in analyzer.classify_events()
+        if row.get("source_layer") == "agent300_visual_gold"
+    ]
+    excluded_rows = [row for row in rows if not row.get("pipeline_evaluable")]
+    return {
+        "status": "success",
+        "report_id": "agent300_visual_only_eval_v2",
+        "scope": "visual_gold_quality_and_verifier_readiness_not_full_accuracy",
+        "sample_size": len(rows),
+        "verifier_metric_eligible": False,
+        "verifier_evaluable_count": len(rows) - len(excluded_rows),
+        "verifier_blocked_count": len(excluded_rows),
+        "excluded_reason_distribution": _counter(excluded_rows, "excluded_reason"),
+        "distributions": {
+            "view": _counter(rows, "view_code"),
+            "match_label": _counter(rows, "match_label"),
+            "gold_action": _counter(rows, "gold_action"),
+            "review_status": _counter(rows, "review_status"),
+            "quality_tier": _counter(rows, "quality_tier"),
+            "mapping_status": _counter(rows, "mapping_status"),
+        },
+        "verifier_readiness": {
+            "status": "partial",
+            "pipeline_evaluable_count": len(rows) - len(excluded_rows),
+            "excluded_from_verifier": len(excluded_rows),
+            "excluded_reason_distribution": _counter(excluded_rows, "excluded_reason"),
+            "required_artifacts": [
+                "verified_events.jsonl",
+                "event_queries.fusion_v2.jsonl",
+                "align_multimodal.json",
+                "asr_quality_report.json",
+            ],
+        },
+        "source_files": {
+            "manifest": str(analyzer.visual_manifest_path),
+            "report": str(analyzer.bridge_map_path.parent / "agent300_visual_only_eval_report.json"),
+            "event_bridge_map": str(analyzer.bridge_map_path),
+            "pipeline_unblock_batch_001_040": str(analyzer.pipeline_unblock_path),
+        },
+    }
+
+
+@app.get("/api/case/{case_id}/pipeline-manifest")
+def get_pipeline_manifest(case_id: str):
+    """Return the pipeline run manifest for a case (step status, schema validation, errors)."""
+    registry = _get_registry()
+    m = registry.get_case(case_id)
+    if m is None:
+        raise HTTPException(404, f"Case not found: {case_id}")
+    source_dir = m.metadata.get("source_case_dir", "")
+    if not source_dir:
+        raise HTTPException(404, f"No source directory for case {case_id}")
+    manager = PipelineManifestManager(Path(source_dir))
+    manifest = manager.load()
+    if manifest is None:
+        return {
+            "status": "no_manifest",
+            "case_id": case_id,
+            "message": f"No pipeline_run_manifest.json found for case {case_id}. Run the pipeline to generate one.",
+            "source_files": {"pipeline_manifest": str(manager.manifest_path)},
+            "steps": [],
+        }
+    return {
+        "status": "success",
+        "case_id": case_id,
+        "manifest": manifest.to_dict(),
+        "failed_steps": [s.step_id for s in manifest.failed_steps()],
+        "all_output_files": manifest.all_output_files(),
+        "source_files": {"pipeline_manifest": str(manager.manifest_path)},
+    }
+
+
+@app.get("/api/case/{case_id}/pipeline-steps")
+def get_pipeline_steps(case_id: str):
+    """Return step-level status for all registered pipeline steps."""
+    registry = _get_registry()
+    m = registry.get_case(case_id)
+    if m is None:
+        raise HTTPException(404, f"Case not found: {case_id}")
+    source_dir = m.metadata.get("source_case_dir", "")
+    if not source_dir:
+        return {
+            "status": "no_source",
+            "case_id": case_id,
+            "steps": [],
+            "message": "No source directory found.",
+        }
+    manager = PipelineManifestManager(Path(source_dir))
+    manifest = manager.load()
+    if manifest is None:
+        return {
+            "status": "no_manifest",
+            "case_id": case_id,
+            "steps": [],
+            "message": "No pipeline_run_manifest.json found.",
+        }
+    return {
+        "status": "success",
+        "case_id": case_id,
+        "run_id": manifest.run_id,
+        "pipeline_status": manifest.status,
+        "steps": [
+            {
+                "step_id": s.step_id,
+                "step_name": s.step_name,
+                "status": s.status,
+                "schema_valid": s.schema_valid,
+                "schema_errors": s.schema_errors,
+                "record_count": s.record_count,
+                "duration_sec": s.duration_sec,
+                "warnings": s.warnings,
+                "error_message": s.error_message,
+            }
+            for s in manifest.steps
+        ],
+        "total_steps": len(manifest.steps),
+        "completed": sum(1 for s in manifest.steps if s.status == "ok"),
+        "failed": sum(1 for s in manifest.steps if s.status == "error"),
+        "pending": sum(1 for s in manifest.steps if s.status == "pending"),
+    }
+
+
+# ── Persisted evaluation report endpoints ──────────────────────────
+
+EVAL_REPORTS_DIR = OUTPUT_DIR / "eval_reports"
+
+_PERSISTED_REPORTS = {
+    "gold_eval_v1": "gold_eval_v1.json",
+    "case_manifest_summary": "case_manifest_summary.json",
+    "missing_artifact_summary": "missing_artifact_summary.json",
+    "gold_annotation_summary": "gold_annotation_summary.json",
+}
+
+
+@app.get("/api/eval/reports")
+def list_eval_reports():
+    """List all persisted evaluation reports."""
+    reports = []
+    for name, fname in _PERSISTED_REPORTS.items():
+        p = EVAL_REPORTS_DIR / fname
+        if p.exists():
+            try:
+                size = p.stat().st_size
+            except OSError:
+                size = None
+            reports.append({
+                "name": name,
+                "file_name": fname,
+                "available": True,
+                "size_bytes": size,
+            })
+        else:
+            reports.append({
+                "name": name,
+                "file_name": fname,
+                "available": False,
+                "size_bytes": None,
+            })
+    return {
+        "status": "success",
+        "reports": reports,
+        "eval_reports_dir": str(EVAL_REPORTS_DIR),
+    }
+
+
+@app.get("/api/eval/report/{report_name}")
+def get_eval_report(report_name: str):
+    """Read a persisted evaluation report by name.
+
+    Available reports: gold_eval_v1, case_manifest_summary,
+    missing_artifact_summary, gold_annotation_summary.
+    """
+    fname = _PERSISTED_REPORTS.get(report_name)
+    if fname is None:
+        raise HTTPException(
+            404,
+            f"Unknown report: {report_name}. Available: {list(_PERSISTED_REPORTS.keys())}"
+        )
+    p = EVAL_REPORTS_DIR / fname
+    if not p.exists():
+        raise HTTPException(
+            404,
+            f"Report '{report_name}' not found at {p}. Run scripts/paper/persist_eval_reports.py first."
+        )
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        raise HTTPException(500, f"Failed to read report: {e}")
+    return {
+        "status": "success",
+        "report_name": report_name,
+        "source_file": str(p),
+        **data,
+    }
+
+
+@app.get("/api/eval/report/{report_name}/download")
+def download_eval_report(report_name: str):
+    """Download a persisted evaluation report as a JSON file attachment."""
+    fname = _PERSISTED_REPORTS.get(report_name)
+    if fname is None:
+        raise HTTPException(
+            404,
+            f"Unknown report: {report_name}. Available: {list(_PERSISTED_REPORTS.keys())}"
+        )
+    p = EVAL_REPORTS_DIR / fname
+    if not p.exists():
+        raise HTTPException(
+            404,
+            f"Report '{report_name}' not found at {p}. Run scripts/paper/persist_eval_reports.py first."
+        )
+    return FileResponse(
+        str(p),
+        media_type="application/json",
+        filename=f"{report_name}.json",
+    )
+
+
+# =========================================================
+# 9c) Gold review tool: local annotation workbench
+# =========================================================
+
+GOLD_DIR = PROJECT_ROOT / "paper_experiments" / "gold"
+GOLD_TASKS_DIR = GOLD_DIR / "annotation_workbench"
+GOLD_TASKS_FILE = GOLD_TASKS_DIR / "tasks.jsonl"
+GOLD_TASKS_CSV_FILE = GOLD_TASKS_DIR / "tasks.csv"
+GOLD_DRAFT_FILE = GOLD_TASKS_DIR / "gold_review_draft.jsonl"
+GOLD_SCHEMA_FILE = GOLD_DIR / "gold_events.real.schema.json"
+GOLD_OUTPUT_FILE = GOLD_DIR / "gold_events.real.jsonl"
+
+
+def _active_gold_tasks_file() -> Path:
+    if GOLD_TASKS_CSV_FILE.exists():
+        return GOLD_TASKS_CSV_FILE
+    return GOLD_TASKS_FILE
+
+
+def _load_gold_tasks() -> List[Dict[str, Any]]:
+    if GOLD_TASKS_CSV_FILE.exists():
+        with GOLD_TASKS_CSV_FILE.open("r", encoding="utf-8-sig", newline="") as f:
+            return [dict(row) for row in csv.DictReader(f)]
+    return _load_jsonl_rows(GOLD_TASKS_FILE)
+
+
+def _gold_task_by_row_id(row_id: int) -> Optional[Dict[str, Any]]:
+    for task in _load_gold_tasks():
+        if int(task.get("row_id", -1)) == row_id:
+            return task
+    return None
+
+
+def _gold_evidence_dir_for_task(task: Dict[str, Any]) -> Optional[Path]:
+    raw = str(task.get("evidence_dir") or "").strip()
+    candidates: List[Path] = []
+    if raw:
+        candidates.append((PROJECT_ROOT / raw).resolve())
+    row_id = str(task.get("row_id", "")).strip()
+    case_id = str(task.get("case_id", "")).strip()
+    event_id = str(task.get("suggested_event_id", "")).strip()
+    if row_id and case_id and event_id:
+        candidates.append((GOLD_TASKS_DIR / "evidence" / f"{row_id}_{case_id}_{event_id}").resolve())
+
+    evidence_root = (GOLD_TASKS_DIR / "evidence").resolve()
+    for candidate in candidates:
+        try:
+            candidate.relative_to(evidence_root)
+        except ValueError:
+            continue
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return None
+
+
+def _gold_source_video_for_task(task: Dict[str, Any]) -> Optional[Path]:
+    view_dirs = {
+        "front": "\u6b63\u65b9\u89c6\u89d2",
+        "rear": "\u540e\u65b9\u89c6\u89d2",
+        "teacher": "\u6559\u5e08\u89c6\u89d2",
+        "top1": "\u659c\u4e0a\u65b9\u89c6\u89d21",
+        "top2": "\u659c\u4e0a\u65b9\u89c6\u89d22",
+    }
+    dataset_dir = "\u667a\u6167\u8bfe\u5802\u5b66\u751f\u884c\u4e3a\u6570\u636e\u96c6"
+    view_code = str(task.get("view_code") or "").strip()
+    case_id = str(task.get("case_id") or "").strip()
+    source_id = case_id.split("__", 1)[1] if "__" in case_id else ""
+    view_dir = view_dirs.get(view_code)
+    if not view_dir or not source_id:
+        return None
+
+    data_root = (PROJECT_ROOT / "data" / dataset_dir).resolve()
+    candidate = (data_root / view_dir / f"{source_id}.mp4").resolve()
+    try:
+        candidate.relative_to(data_root)
+    except ValueError:
+        return None
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    return None
+
+
+def _load_gold_drafts() -> Dict[int, Dict[str, Any]]:
+    rows = _load_jsonl_rows(GOLD_DRAFT_FILE)
+    return {int(r["row_id"]): r for r in rows if "row_id" in r}
+
+
+def _save_gold_drafts(drafts: Dict[int, Dict[str, Any]]) -> None:
+    GOLD_DRAFT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with GOLD_DRAFT_FILE.open("w", encoding="utf-8") as f:
+        for row_id in sorted(drafts.keys()):
+            f.write(json.dumps(drafts[row_id], ensure_ascii=False) + "\n")
+
+
+def _draft_to_gold_event(task: Dict[str, Any], draft: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a task + draft pair into a gold_events.real.jsonl record."""
+    def _f(val: Any, default: float = 0.0) -> float:
+        try:
+            return float(val)
+        except Exception:
+            return default
+
+    def _s(val: Any) -> str:
+        return str(val or "").strip()
+
+    def _i(val: Any) -> Any:
+        s = _s(val)
+        if s == "" or s.lower() == "unknown":
+            return "unknown"
+        try:
+            return int(val)
+        except Exception:
+            return s
+
+    start = _f(draft.get("manual_gold_start"), _f(task.get("suggested_time_start")))
+    end = _f(draft.get("manual_gold_end"), _f(task.get("suggested_time_end")))
+
+    return {
+        "case_id": task["case_id"],
+        "view_code": task["view_code"],
+        "suggested_event_id": task.get("suggested_event_id", ""),
+        "suggested_track_id": task.get("suggested_track_id"),
+        "suggested_action": task.get("suggested_action", ""),
+        "suggested_time_window": {
+            "start": _f(task.get("suggested_time_start")),
+            "end": _f(task.get("suggested_time_end")),
+        },
+        "suggested_label": task.get("suggested_label"),
+        "gold_track_id": _i(draft.get("manual_gold_track_id")) or _i(task.get("suggested_track_id")),
+        "gold_action": _s(draft.get("manual_gold_action")) or _s(task.get("suggested_action")),
+        "gold_start": start,
+        "gold_end": end,
+        "match_label": _s(draft.get("manual_match_label")) or _s(task.get("suggested_label")),
+        "noise_type": _s(draft.get("manual_noise_type")) or "none",
+        "occlusion_level": _s(draft.get("manual_occlusion_level")) or "none",
+        "asr_quality": _s(draft.get("manual_asr_quality")) or "not_applicable",
+        "annotator": _s(draft.get("manual_annotator")) or "unknown",
+        "review_status": _s(draft.get("manual_review_status")) or "draft",
+        "notes": _s(draft.get("manual_notes")),
+    }
+
+
+def _validate_gold_event(event: Dict[str, Any]) -> List[str]:
+    errors: List[str] = []
+    required = [
+        "case_id", "view_code", "suggested_event_id", "suggested_track_id",
+        "suggested_action", "suggested_time_window", "suggested_label",
+        "gold_track_id", "gold_action", "gold_start", "gold_end",
+        "match_label", "noise_type", "occlusion_level", "asr_quality",
+        "annotator", "review_status",
+    ]
+    for field in required:
+        if field not in event:
+            errors.append(f"missing required field: {field}")
+
+    enums = {
+        "view_code": {"front", "rear", "teacher", "top1", "top2"},
+        "match_label": {"match", "mismatch", "uncertain"},
+        "suggested_label": {"match", "mismatch", "uncertain", "unknown", None},
+        "noise_type": {"none", "asr_empty", "asr_noise", "occlusion", "multi_person_ambiguity", "camera_angle", "motion_blur", "other"},
+        "occlusion_level": {"none", "low", "medium", "high"},
+        "asr_quality": {"empty", "low", "medium", "high", "not_applicable"},
+        "review_status": {"draft", "needs_adjudication", "peer_reviewed", "adjudicated", "final", "rejected"},
+    }
+    for field, allowed in enums.items():
+        val = event.get(field)
+        if val not in allowed:
+            errors.append(f"{field}: invalid value '{val}', expected one of {sorted(str(x) for x in allowed)}")
+
+    tw = event.get("suggested_time_window")
+    if isinstance(tw, dict):
+        for k in ("start", "end"):
+            if k not in tw:
+                errors.append(f"suggested_time_window missing '{k}'")
+    elif "suggested_time_window" in event:
+        errors.append("suggested_time_window must be an object with start/end")
+
+    return errors
+
+
+@app.get("/gold/review", response_class=HTMLResponse)
+async def gold_review_page():
+    tpl = TEMPLATE_DIR / "gold_review.html"
+    if tpl.exists():
+        return FileResponse(str(tpl))
+    raise HTTPException(404, "gold_review.html not found in templates/")
+
+
+@app.get("/api/gold/tasks")
+def api_gold_tasks():
+    tasks = _load_gold_tasks()
+    drafts = _load_gold_drafts()
+
+    merged: List[Dict[str, Any]] = []
+    for t in tasks:
+        rid = int(t.get("row_id", 0))
+        d = drafts.get(rid)
+        has_draft = d is not None
+        is_complete = False
+        if d:
+            is_complete = bool(
+                d.get("manual_match_label")
+                and d.get("manual_gold_action")
+                and d.get("manual_review_status")
+            )
+        merged.append({
+            **t,
+            "draft": d,
+            "has_draft": has_draft,
+            "is_complete": is_complete,
+        })
+
+    exported_ids: set = set()
+    if GOLD_OUTPUT_FILE.exists():
+        for row in _load_jsonl_rows(GOLD_OUTPUT_FILE):
+            eid = row.get("suggested_event_id", "")
+            cid = row.get("case_id", "")
+            exported_ids.add(f"{cid}::{eid}")
+
+    for m in merged:
+        key = f"{m.get('case_id', '')}::{m.get('suggested_event_id', '')}"
+        m["is_exported"] = key in exported_ids
+
+    drafted_count = sum(1 for m in merged if m["has_draft"])
+    complete_count = sum(1 for m in merged if m["is_complete"])
+    exported_count = sum(1 for m in merged if m["is_exported"])
+
+    return {
+        "status": "success",
+        "tasks": merged,
+        "progress": {
+            "total": len(merged),
+            "drafted": drafted_count,
+            "complete": complete_count,
+            "exported": exported_count,
+        },
+        "source_files": {
+            "tasks": str(_active_gold_tasks_file()),
+            "tasks_jsonl": str(GOLD_TASKS_FILE),
+            "tasks_csv": str(GOLD_TASKS_CSV_FILE),
+            "draft": str(GOLD_DRAFT_FILE),
+            "output": str(GOLD_OUTPUT_FILE),
+        },
+    }
+
+
+@app.get("/api/gold/task/{row_id}")
+def api_gold_task(row_id: int):
+    task = _gold_task_by_row_id(row_id)
+    if task is None:
+        raise HTTPException(404, f"task row_id={row_id} not found")
+
+    drafts = _load_gold_drafts()
+    draft = drafts.get(row_id)
+
+    case_output_dir = Path(task.get("case_output_dir", ""))
+    overlay_path = task.get("overlay_video_path", "")
+    timeline_path = task.get("timeline_chart_path", "")
+
+    overlay_url = None
+    if overlay_path:
+        p = PROJECT_ROOT / overlay_path
+        if p.exists():
+            overlay_url = f"/output/{p.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()}"
+
+    source_video_url = None
+    source_video = _gold_source_video_for_task(task)
+    if source_video is not None:
+        source_video_url = f"/api/gold/task/{row_id}/source-video"
+
+    timeline_url = None
+    if timeline_path:
+        p = PROJECT_ROOT / timeline_path
+        if p.exists():
+            timeline_url = f"/output/{p.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()}"
+
+    contact_sheet_url = None
+    contact_sheet_path = task.get("contact_sheet_path", "")
+    if contact_sheet_path:
+        p = PROJECT_ROOT / str(contact_sheet_path)
+        if p.exists():
+            try:
+                p.resolve().relative_to(PROJECT_ROOT.resolve())
+                contact_sheet_url = f"/api/gold/task/{row_id}/contact-sheet"
+            except ValueError:
+                contact_sheet_url = None
+    if contact_sheet_url is None:
+        evidence_dir = _gold_evidence_dir_for_task(task)
+        if evidence_dir is not None and (evidence_dir / "contact_sheet.jpg").exists():
+            contact_sheet_url = f"/api/gold/task/{row_id}/contact-sheet"
+
+    evidence = None
+    event_id = task.get("suggested_event_id", "")
+    case_id = task.get("case_id", "")
+    if case_output_dir.exists() and event_id:
+        for ve_file in ("verified_events.jsonl", "event_queries.fusion_v2.jsonl"):
+            ve_path = case_output_dir / ve_file
+            if ve_path.exists():
+                for row in _load_jsonl_rows(ve_path):
+                    rid = str(row.get("event_id") or row.get("query_id") or "")
+                    if rid == event_id:
+                        evidence = row
+                        break
+                if evidence:
+                    break
+
+    return {
+        "status": "success",
+        "task": task,
+        "draft": draft,
+        "evidence": evidence,
+        "media": {
+            "overlay_url": overlay_url,
+            "source_video_url": source_video_url,
+            "timeline_url": timeline_url,
+            "contact_sheet_url": contact_sheet_url,
+        },
+        "missing_evidence": task.get("missing_evidence", ""),
+    }
+
+
+@app.get("/api/gold/task/{row_id}/contact-sheet")
+def api_gold_contact_sheet(row_id: int):
+    task = _gold_task_by_row_id(row_id)
+    if task is None:
+        raise HTTPException(404, f"task row_id={row_id} not found")
+
+    candidates: List[Path] = []
+    raw = str(task.get("contact_sheet_path") or "").strip()
+    if raw:
+        candidates.append((PROJECT_ROOT / raw).resolve())
+    evidence_dir = _gold_evidence_dir_for_task(task)
+    if evidence_dir is not None:
+        candidates.append((evidence_dir / "contact_sheet.jpg").resolve())
+
+    evidence_root = (GOLD_TASKS_DIR / "evidence").resolve()
+    for candidate in candidates:
+        try:
+            candidate.relative_to(evidence_root)
+        except ValueError:
+            continue
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(str(candidate), media_type="image/jpeg")
+    raise HTTPException(404, f"contact sheet not found for row_id={row_id}")
+
+
+@app.get("/api/gold/task/{row_id}/source-video")
+def api_gold_source_video(row_id: int):
+    task = _gold_task_by_row_id(row_id)
+    if task is None:
+        raise HTTPException(404, f"task row_id={row_id} not found")
+    source_video = _gold_source_video_for_task(task)
+    if source_video is None:
+        raise HTTPException(404, f"source video not found for row_id={row_id}")
+    return FileResponse(str(source_video), media_type="video/mp4")
+
+
+@app.post("/api/gold/task/{row_id}/draft")
+async def api_gold_save_draft(row_id: int, request: Request):
+    body = await request.json()
+    tasks = _load_gold_tasks()
+    task = None
+    for t in tasks:
+        if int(t.get("row_id", -1)) == row_id:
+            task = t
+            break
+    if task is None:
+        raise HTTPException(404, f"task row_id={row_id} not found")
+
+    drafts = _load_gold_drafts()
+    draft_record = {
+        "row_id": row_id,
+        "case_id": task["case_id"],
+        "view_code": task["view_code"],
+        "suggested_event_id": task.get("suggested_event_id", ""),
+        "manual_gold_track_id": body.get("manual_gold_track_id", ""),
+        "manual_gold_action": body.get("manual_gold_action", ""),
+        "manual_gold_start": body.get("manual_gold_start", ""),
+        "manual_gold_end": body.get("manual_gold_end", ""),
+        "manual_match_label": body.get("manual_match_label", ""),
+        "manual_noise_type": body.get("manual_noise_type", ""),
+        "manual_occlusion_level": body.get("manual_occlusion_level", ""),
+        "manual_asr_quality": body.get("manual_asr_quality", ""),
+        "manual_annotator": body.get("manual_annotator", ""),
+        "manual_review_status": body.get("manual_review_status", "draft"),
+        "manual_notes": body.get("manual_notes", ""),
+    }
+    drafts[row_id] = draft_record
+    _save_gold_drafts(drafts)
+    return {"status": "saved", "row_id": row_id}
+
+
+@app.post("/api/gold/export")
+def api_gold_export():
+    tasks = _load_gold_tasks()
+    task_map = {int(t["row_id"]): t for t in tasks if "row_id" in t}
+    drafts = _load_gold_drafts()
+
+    if not drafts:
+        raise HTTPException(400, "No drafts to export. Save at least one draft first.")
+
+    if GOLD_OUTPUT_FILE.exists():
+        import time
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        backup_path = GOLD_OUTPUT_FILE.with_suffix(f".jsonl.bak.{ts}")
+        shutil.copy2(str(GOLD_OUTPUT_FILE), str(backup_path))
+    else:
+        backup_path = None
+
+    events: List[Dict[str, Any]] = []
+    all_errors: List[Dict[str, Any]] = []
+
+    for row_id in sorted(drafts.keys()):
+        draft = drafts[row_id]
+        task = task_map.get(row_id)
+        if task is None:
+            all_errors.append({"row_id": row_id, "errors": [f"task not found in {_active_gold_tasks_file().name}"]})
+            continue
+        event = _draft_to_gold_event(task, draft)
+        errs = _validate_gold_event(event)
+        if errs:
+            all_errors.append({"row_id": row_id, "case_id": task.get("case_id"), "errors": errs})
+        events.append(event)
+
+    if all_errors:
+        raise HTTPException(
+            422,
+            detail=json.dumps({"validation_errors": all_errors}, ensure_ascii=False),
+        )
+
+    GOLD_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with GOLD_OUTPUT_FILE.open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    labels = {}
+    review_statuses = {}
+    noise_types = {}
+    for ev in events:
+        ml = ev.get("match_label", "")
+        labels[ml] = labels.get(ml, 0) + 1
+        rs = ev.get("review_status", "")
+        review_statuses[rs] = review_statuses.get(rs, 0) + 1
+        nt = ev.get("noise_type", "")
+        noise_types[nt] = noise_types.get(nt, 0) + 1
+
+    return {
+        "status": "exported",
+        "count": len(events),
+        "backup_path": str(backup_path) if backup_path else None,
+        "summary": {
+            "label_distribution": labels,
+            "review_status_distribution": review_statuses,
+            "noise_type_distribution": noise_types,
+        },
+        "source_files": {
+            "output": str(GOLD_OUTPUT_FILE),
+        },
+    }
+
+
+@app.get("/api/gold/validate")
+def api_gold_validate():
+    if not GOLD_OUTPUT_FILE.exists():
+        raise HTTPException(404, "gold_events.real.jsonl not found. Run export first.")
+
+    events = _load_jsonl_rows(GOLD_OUTPUT_FILE)
+    errors: List[Dict[str, Any]] = []
+    labels: Dict[str, int] = {}
+    review_statuses: Dict[str, int] = {}
+    noise_types: Dict[str, int] = {}
+    occlusion_levels: Dict[str, int] = {}
+    asr_qualities: Dict[str, int] = {}
+    annotators: Dict[str, int] = {}
+
+    for i, ev in enumerate(events):
+        errs = _validate_gold_event(ev)
+        if errs:
+            errors.append({"index": i, "case_id": ev.get("case_id", "?"), "errors": errs})
+
+        ml = ev.get("match_label", "")
+        labels[ml] = labels.get(ml, 0) + 1
+        rs = ev.get("review_status", "")
+        review_statuses[rs] = review_statuses.get(rs, 0) + 1
+        nt = ev.get("noise_type", "")
+        noise_types[nt] = noise_types.get(nt, 0) + 1
+        ol = ev.get("occlusion_level", "")
+        occlusion_levels[ol] = occlusion_levels.get(ol, 0) + 1
+        aq = ev.get("asr_quality", "")
+        asr_qualities[aq] = asr_qualities.get(aq, 0) + 1
+        an = ev.get("annotator", "")
+        annotators[an] = annotators.get(an, 0) + 1
+
+    quality_tiers = {"high": 0, "medium": 0, "low": 0}
+    for ev in events:
+        aq = ev.get("asr_quality", "not_applicable")
+        ol = ev.get("occlusion_level", "none")
+        if aq in ("high",) and ol in ("none", "low"):
+            quality_tiers["high"] += 1
+        elif aq in ("low", "empty") or ol in ("high",):
+            quality_tiers["low"] += 1
+        else:
+            quality_tiers["medium"] += 1
+
+    return {
+        "status": "success",
+        "valid": len(errors) == 0,
+        "sample_size": len(events),
+        "error_count": len(errors),
+        "errors": errors[:50],
+        "summary": {
+            "label_distribution": labels,
+            "review_status_distribution": review_statuses,
+            "noise_type_distribution": noise_types,
+            "occlusion_level_distribution": occlusion_levels,
+            "asr_quality_distribution": asr_qualities,
+            "annotator_distribution": annotators,
+            "quality_tiers": quality_tiers,
+        },
+        "source_files": {
+            "output": str(GOLD_OUTPUT_FILE),
+            "schema": str(GOLD_SCHEMA_FILE),
+        },
+    }
 
 
 # =========================================================
