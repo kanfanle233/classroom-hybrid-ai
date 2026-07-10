@@ -1,5 +1,5 @@
 import argparse
-import json
+import hashlib
 import sys
 from collections import Counter
 from pathlib import Path
@@ -26,12 +26,22 @@ def _validate_rows(rows: List[Dict[str, Any]]) -> None:
 
 
 def _assign_split(rows: List[Dict[str, Any]], train_ratio: float) -> None:
-    """Assign a deterministic train/val split without changing sample order."""
+    """Assign a deterministic event-grouped split without changing sample order."""
     ratio = max(0.0, min(1.0, float(train_ratio)))
+    group_ids = {str(row.get("event_id") or row.get("sample_id", "")) for row in rows}
+
+    def group_order(group_id: str) -> bytes:
+        return hashlib.sha256(group_id.encode("utf-8")).digest()
+
+    ordered_groups = sorted(group_ids, key=group_order)
+    train_group_count = int(round(ratio * len(ordered_groups)))
+    if 0.0 < ratio < 1.0 and len(ordered_groups) > 1:
+        train_group_count = max(1, min(len(ordered_groups) - 1, train_group_count))
+    train_groups = set(ordered_groups[:train_group_count])
     for row in rows:
         sample_id = str(row.get("sample_id", ""))
-        bucket = sum((index + 1) * ord(char) for index, char in enumerate(sample_id)) % 10_000
-        row["split"] = "train" if bucket < int(ratio * 10_000) else "val"
+        group_id = str(row.get("event_id") or sample_id)
+        row["split"] = "train" if group_id in train_groups else "val"
 
 
 def main() -> None:
@@ -41,8 +51,8 @@ def main() -> None:
     parser.add_argument("--actions", required=True, type=str)
     parser.add_argument("--out", required=True, type=str, help="train_samples.jsonl")
     parser.add_argument("--train_ratio", default=0.8, type=float)
-    parser.add_argument("--shift_1", default=1.0, type=float, help="temporal shift seconds")
-    parser.add_argument("--shift_2", default=2.0, type=float, help="temporal shift seconds")
+    parser.add_argument("--shift_1", default=1.0, type=float, help="deprecated compatibility option")
+    parser.add_argument("--shift_2", default=2.0, type=float, help="deprecated compatibility option")
     args = parser.parse_args()
 
     event_queries = Path(args.event_queries).resolve()

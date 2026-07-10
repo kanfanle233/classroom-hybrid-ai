@@ -1,7 +1,7 @@
 # contracts/ 目录 — 完整维护报告
 
-> **位置**：`F:\PythonProject\pythonProject\YOLOv11\contracts\`
-> **报告生成日期**：2026-05-03
+> **位置**：`classroom_pipeline/contracts/`
+> **更新日期**：2026-07-10
 
 ## 一、大致背景
 
@@ -10,14 +10,18 @@
 ## 二、位置与目录结构
 
 ```
-contracts/
+classroom_pipeline/contracts/
 ├── __init__.py                  # Python包初始化
 ├── schemas.py                   # 数据Schema定义（核心文件）
 └── examples/                    # 样例文件
     ├── event_queries.sample.jsonl           # 事件查询样例
+    ├── align_multimodal.sample.json          # 多模态对齐样例
+    ├── pipeline_manifest.sample.json         # 流水线清单样例
     ├── verified_events.sample.jsonl         # 验证后事件样例
     ├── verifier_samples_train.sample.jsonl  # 验证器训练样例
-    └── pose_tracks_smooth_uq.sample.jsonl   # 带UQ的姿态轨迹样例
+    ├── verifier_eval_report.sample.json      # 验证器评估样例
+    ├── verifier_calibration_report.sample.json # 校准报告样例
+    └── pose_tracks_smooth_uq.sample.jsonl    # 带UQ的姿态轨迹样例
 ```
 
 ## 三、是干什么的

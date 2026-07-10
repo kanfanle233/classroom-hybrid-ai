@@ -1,4 +1,3 @@
-import sys; from pathlib import Path; sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import argparse
 import csv
 import json
@@ -12,7 +11,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from utils.sliced_inference_utils import bbox_center, bbox_iou, check_sr_backend_available, resolve_roi
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from classroom_pipeline.utils.sliced_inference_utils import bbox_center, bbox_iou, check_sr_backend_available, resolve_roi
 
 
 VARIANTS = [

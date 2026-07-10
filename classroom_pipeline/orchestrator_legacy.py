@@ -337,7 +337,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Formal pipeline (fixed schema): pose -> uq -> actions -> asr -> event queries -> align -> verifier"
     )
-    parser.add_argument("--video", type=str, default="data/videos/demo3.mp4")
+    parser.add_argument("--video", type=str, required=True)
     parser.add_argument("--name", type=str, default="")
     parser.add_argument("--out_dir", type=str, default="")
     parser.add_argument("--output_root", type=str, default="")

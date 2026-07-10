@@ -1,12 +1,15 @@
-import sys; from pathlib import Path; sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
 import cv2
 
-from utils.sliced_inference_utils import resolve_roi
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from classroom_pipeline.utils.sliced_inference_utils import resolve_roi
 
 
 def _resolve(base_dir: Path, raw: str) -> Path:

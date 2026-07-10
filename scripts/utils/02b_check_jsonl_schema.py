@@ -97,6 +97,12 @@ def _validate_examples(base_dir: Path, examples_dir: Path) -> Tuple[bool, List[s
 def main() -> None:
     base_dir = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Validate formal verifier contract artifacts.")
+    parser.add_argument(
+        "--case-dir",
+        type=str,
+        default="",
+        help="Validate the standard artifact set in one pipeline case directory.",
+    )
     parser.add_argument("--event_queries", type=str, default="")
     parser.add_argument("--pose_uq", type=str, default="")
     parser.add_argument("--align", type=str, default="")
@@ -108,42 +114,67 @@ def main() -> None:
     parser.add_argument("--examples_dir", type=str, default="")
     args = parser.parse_args()
 
-    event_path = _resolve(base_dir, args.event_queries, "output/event_queries.jsonl")
-    pose_uq_path = _resolve(base_dir, args.pose_uq, "output/pose_tracks_smooth_uq.jsonl")
-    align_path = _resolve(base_dir, args.align, "output/align_multimodal.json")
-    samples_path = _resolve(base_dir, args.verifier_samples, "output/verifier_samples_train.jsonl")
-    verified_path = _resolve(base_dir, args.verified_events, "output/verified_events.jsonl")
-    eval_path = _resolve(base_dir, args.eval_report, "output/verifier_eval_report.json")
-    calibration_path = _resolve(base_dir, args.calibration_report, "output/verifier_calibration_report.json")
-    manifest_path = _resolve(base_dir, args.manifest, "output/pipeline_manifest.json")
-    examples_dir = _resolve(base_dir, args.examples_dir, "contracts/examples")
+    explicit = {
+        "event_queries": args.event_queries,
+        "pose_uq": args.pose_uq,
+        "align": args.align,
+        "verifier_samples": args.verifier_samples,
+        "verified_events": args.verified_events,
+        "eval_report": args.eval_report,
+        "calibration_report": args.calibration_report,
+        "manifest": args.manifest,
+    }
+    case_dir = _resolve(base_dir, args.case_dir) if args.case_dir else None
+    validate_all = case_dir is not None or not any(explicit.values())
+    default_root = case_dir if case_dir is not None else base_dir / "output"
+    default_names = {
+        "event_queries": "event_queries.fusion_v2.jsonl" if case_dir else "event_queries.jsonl",
+        "pose_uq": "pose_tracks_smooth_uq.jsonl",
+        "align": "align_multimodal.json",
+        "verifier_samples": "verifier_samples_train.jsonl",
+        "verified_events": "verified_events.jsonl",
+        "eval_report": "verifier_eval_report.json",
+        "calibration_report": "verifier_calibration_report.json",
+        "manifest": "pipeline_manifest.json",
+    }
+
+    def selected_path(name: str) -> Path | None:
+        value = explicit[name]
+        if value:
+            return _resolve(base_dir, value)
+        if validate_all:
+            return (default_root / default_names[name]).resolve()
+        return None
 
     all_ok = True
-    ok, n, errors = validate_jsonl_file(event_path, validate_event_query_record)
-    all_ok &= _report_jsonl("event_queries", ok, n, errors)
+    jsonl_checks = [
+        ("event_queries", "event_queries", validate_event_query_record),
+        ("pose_tracks_smooth_uq", "pose_uq", validate_pose_uq_record),
+        ("verifier_samples_train", "verifier_samples", validate_verifier_sample_record),
+        ("verified_events", "verified_events", validate_verified_event_record),
+    ]
+    for title, name, validator in jsonl_checks:
+        path = selected_path(name)
+        if path is None:
+            continue
+        ok, n, errors = validate_jsonl_file(path, validator)
+        all_ok &= _report_jsonl(title, ok, n, errors)
 
-    ok, n, errors = validate_jsonl_file(pose_uq_path, validate_pose_uq_record)
-    all_ok &= _report_jsonl("pose_tracks_smooth_uq", ok, n, errors)
+    json_checks = [
+        ("align_multimodal", "align", validate_align_file),
+        ("verifier_eval_report", "eval_report", validate_verifier_eval_report),
+        ("verifier_calibration_report", "calibration_report", validate_verifier_calibration_report),
+        ("pipeline_manifest", "manifest", validate_pipeline_manifest),
+    ]
+    for title, name, validator in json_checks:
+        path = selected_path(name)
+        if path is None:
+            continue
+        ok, errors = validate_json_file(path, validator)
+        all_ok &= _report_json(title, ok, errors)
 
-    ok, errors = validate_json_file(align_path, validate_align_file)
-    all_ok &= _report_json("align_multimodal", ok, errors)
-
-    ok, n, errors = validate_jsonl_file(samples_path, validate_verifier_sample_record)
-    all_ok &= _report_jsonl("verifier_samples_train", ok, n, errors)
-
-    ok, n, errors = validate_jsonl_file(verified_path, validate_verified_event_record)
-    all_ok &= _report_jsonl("verified_events", ok, n, errors)
-
-    ok, errors = validate_json_file(eval_path, validate_verifier_eval_report)
-    all_ok &= _report_json("verifier_eval_report", ok, errors)
-
-    ok, errors = validate_json_file(calibration_path, validate_verifier_calibration_report)
-    all_ok &= _report_json("verifier_calibration_report", ok, errors)
-
-    ok, errors = validate_json_file(manifest_path, validate_pipeline_manifest)
-    all_ok &= _report_json("pipeline_manifest", ok, errors)
-
-    if examples_dir.exists():
+    if args.examples_dir:
+        examples_dir = _resolve(base_dir, args.examples_dir)
         print(f"[INFO] validating examples in {examples_dir}")
         examples_ok, _ = _validate_examples(base_dir, examples_dir)
         all_ok &= examples_ok

@@ -14,7 +14,7 @@ COMMANDS = {"run", "doctor", "validate", "clean"}
 
 def _normalize_argv(argv: list[str]) -> list[str]:
     if not argv:
-        return ["run"]
+        return ["--help"]
     if argv[0] in COMMANDS or argv[0] in {"-h", "--help"}:
         return argv
     return ["run", *argv]
