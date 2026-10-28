@@ -1,3 +1,0 @@
-﻿backend,case_id,view_code,duration_sec,returncode,elapsed_sec,transcript_segments,transcript_non_empty,placeholder,source,transcript_path,log_path
-whisper,rear__0499,rear,2.8,0,8.14,1,1,1,asr_placeholder,output/asr_ablation/smoke_20260420_asr/whisper/rear/rear__0499/transcript.jsonl,paper_experiments/run_logs/asr_ablation_smoke_20260420_asr/whisper_01_rear__0499.log
-openai,rear__0499,rear,2.8,0,0.32,1,1,1,asr_placeholder,output/asr_ablation/smoke_20260420_asr/openai/rear/rear__0499/transcript.jsonl,paper_experiments/run_logs/asr_ablation_smoke_20260420_asr/openai_01_rear__0499.log

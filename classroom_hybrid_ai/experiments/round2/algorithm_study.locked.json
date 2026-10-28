@@ -1,0 +1,123 @@
+{
+  "schema_version": "classroom_hybrid_ai.performance_study.v1",
+  "comparison_type": "algorithm_quality_cost",
+  "repository_root": "E:\\PythonProject\\pythonProject\\YOLOv11",
+  "baseline_variant": "locate_only",
+  "repeats": 3,
+  "seed": 0,
+  "delivery": "whole_pipeline_s0_s7_all_videos",
+  "videos": [
+    {
+      "id": "classroom_55598",
+      "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\data\\智慧课堂学生行为数据集\\正方视角\\55598.mp4",
+      "sha256": "2277147ba961e2c069ab26a096792777c89f620403ed3d44e3d05e7a2d0c16e6"
+    }
+  ],
+  "variants": [
+    {
+      "id": "locate_only",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\default.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "089c3f5644a69de2574a6883a5f71d3e0a655f8047584e35869493b6c5b33743",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        }
+      ]
+    },
+    {
+      "id": "yolo26n_only",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\localization_yolo_only.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "a3bfe582e41ef623c0e04940ca755a19c17a4320974315122dc107f8ff222a1e",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "yolo",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\candidates\\yolo26-aed8ed10\\yolo26n-pose.pt",
+          "sha256": "eb3bb8268828aeaf515cec23a4bfafd793944a86fe9af94ba7823609c14522a9"
+        }
+      ]
+    },
+    {
+      "id": "yolo26n_hybrid",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\localization_hybrid.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "a161a10920d62f9dfe0b6b36ec02a48f7119a6e4dcfc7c2565232c6dcd8154ec",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        },
+        {
+          "id": "yolo",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\candidates\\yolo26-aed8ed10\\yolo26n-pose.pt",
+          "sha256": "eb3bb8268828aeaf515cec23a4bfafd793944a86fe9af94ba7823609c14522a9"
+        }
+      ]
+    },
+    {
+      "id": "yolo26m_only",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\localization_yolo26m_only.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "eef9642bd0f816e1c47d7f766fa64a5570ccffaab4142dab66f46d0f4bad7538",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "yolo",
+          "path": "E:\\PythonProject\\pythonProject\\yolo实验\\models\\pretrained\\yolo26\\yolo26m.pt",
+          "sha256": "401cea9ab23ad19246ff7744859816bc599f350e93c9dd30367b6f0a0745d0b7"
+        }
+      ]
+    },
+    {
+      "id": "yolo26m_hybrid",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\localization_yolo26m_hybrid.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "1972b1c16b7f8b1f7202ebb35efde0dc7a4c5a24dc78ebcea20fce7717eedc28",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        },
+        {
+          "id": "yolo",
+          "path": "E:\\PythonProject\\pythonProject\\yolo实验\\models\\pretrained\\yolo26\\yolo26m.pt",
+          "sha256": "401cea9ab23ad19246ff7744859816bc599f350e93c9dd30367b6f0a0745d0b7"
+        }
+      ]
+    }
+  ]
+}

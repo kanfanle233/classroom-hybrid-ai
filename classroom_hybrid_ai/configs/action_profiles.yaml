@@ -1,0 +1,35 @@
+schema_version: classroom_hybrid_ai.action_profiles.v1
+profiles:
+  core8_v1:
+    version: "1.0"
+    purpose: "论文主结果：学生课堂八类可见动作"
+    actions:
+      - {code: dx, action_id: a_dx, name_zh: "低头写字", name_en: "HEAD_DOWN_WRITING", color: "#4E79A7", definition: "学生低头，手部可见地持续接触纸张或作业书写。"}
+      - {code: dk, action_id: a_dk, name_zh: "低头看书", name_en: "HEAD_DOWN_READING", color: "#59A14F", definition: "学生低头阅读书本、讲义或纸张，未见持续书写接触。"}
+      - {code: tt, action_id: a_tt, name_zh: "抬头听课", name_en: "LOOKING_UP_LISTENING", color: "#F28E2B", definition: "学生面向教学区域，未见其它更明确的持续动作。"}
+      - {code: zt, action_id: a_zt, name_zh: "转头", name_en: "TURNING_HEAD", color: "#B07AA1", definition: "学生头部或上身持续转向后方或侧后方。"}
+      - {code: js, action_id: a_js, name_zh: "举手", name_en: "HAND_RAISED", color: "#E15759", definition: "学生一只或双手抬到肩部以上并保持可见。"}
+      - {code: zl, action_id: a_zl, name_zh: "站立", name_en: "STANDING", color: "#76B7B2", definition: "学生从坐姿变为站姿或清楚保持站立。"}
+      - {code: xt, action_id: a_xt, name_zh: "小组讨论", name_en: "PEER_DISCUSSION", color: "#EDC948", definition: "学生面向同伴、交谈或与同伴交换物品。"}
+      - {code: jz, action_id: a_jz, name_zh: "教师指导", name_en: "TEACHER_GUIDANCE", color: "#FF9DA7", definition: "学生与近距离教师发生指向、讲解或指导互动。"}
+    excluded: ["SCB read and write", "teacher", "screen", "blackboard", "other"]
+    audio_required_for: ["朗读"]
+    source_notes: ["core8_v1 is the fixed research baseline; UNKNOWN/gray is retained when evidence is insufficient."]
+  scb_student_11_candidate_v1:
+    version: "1.0"
+    purpose: "扩展实验：在 core8 上加入三类学生动作"
+    actions:
+      - {code: dx, action_id: a_dx, name_zh: "低头写字", name_en: "HEAD_DOWN_WRITING", color: "#4E79A7", definition: "学生低头并持续书写。"}
+      - {code: dk, action_id: a_dk, name_zh: "低头看书", name_en: "HEAD_DOWN_READING", color: "#59A14F", definition: "学生低头阅读。"}
+      - {code: tt, action_id: a_tt, name_zh: "抬头听课", name_en: "LOOKING_UP_LISTENING", color: "#F28E2B", definition: "学生面向教学区域听课。"}
+      - {code: zt, action_id: a_zt, name_zh: "转头", name_en: "TURNING_HEAD", color: "#B07AA1", definition: "学生转向后方或侧后方。"}
+      - {code: js, action_id: a_js, name_zh: "举手", name_en: "HAND_RAISED", color: "#E15759", definition: "手部高于肩部。"}
+      - {code: zl, action_id: a_zl, name_zh: "站立", name_en: "STANDING", color: "#76B7B2", definition: "学生清楚站立。"}
+      - {code: xt, action_id: a_xt, name_zh: "小组讨论", name_en: "PEER_DISCUSSION", color: "#EDC948", definition: "与同伴发生可见互动。"}
+      - {code: jz, action_id: a_jz, name_zh: "教师指导", name_en: "TEACHER_GUIDANCE", color: "#FF9DA7", definition: "与教师发生指导互动。"}
+      - {code: bs, action_id: a_bs, name_zh: "学生板书", name_en: "BOARD_WRITING", color: "#9C755F", definition: "学生在黑板或板面前书写。"}
+      - {code: zs, action_id: a_zs, name_zh: "上台展示", name_en: "PRESENTING", color: "#17BECF", definition: "学生站在前方展示区域进行展示。"}
+      - {code: hd, action_id: a_hd, name_zh: "回答问题", name_en: "ANSWERING_QUESTION", color: "#2F4B7C", definition: "学生以举手或面向教师的可见方式回答问题。"}
+    excluded: ["SCB read and write", "teacher", "screen", "blackboard", "other"]
+    audio_required_for: ["朗读"]
+    source_notes: ["Candidate only; SCB data/weights are not used for training or release without a license."]

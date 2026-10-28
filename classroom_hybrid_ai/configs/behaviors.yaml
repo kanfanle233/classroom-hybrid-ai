@@ -1,0 +1,60 @@
+schema_version: classroom_hybrid_ai.behaviors.v1
+
+# Closed eight-action taxonomy shared by online Qwen classification and the
+# frozen evaluation command.
+primary_actions:
+  - label: dx
+    name_zh: "\u4f4e\u5934\u5199\u5b57"
+    color: "#4E79A7"
+    definition: Student lowers their head and continuously writes on paper or an assignment.
+  - label: dk
+    name_zh: "\u4f4e\u5934\u770b\u4e66"
+    color: "#59A14F"
+    definition: Student looks down and reads a book, handout or sheet.
+  - label: tt
+    name_zh: "\u62ac\u5934\u542c\u8bfe"
+    color: "#F28E2B"
+    definition: Student faces the teaching area with no visible sustained writing, reading or peer talk.
+  - label: zt
+    name_zh: "\u8f6c\u5934"
+    color: "#B07AA1"
+    definition: Student's head or upper body remains turned toward the rear or rear-side.
+  - label: js
+    name_zh: "\u4e3e\u624b"
+    color: "#E15759"
+    definition: Student raises one or both hands and keeps them above shoulder level.
+  - label: zl
+    name_zh: "\u7ad9\u7acb"
+    color: "#76B7B2"
+    definition: Student changes from sitting to standing or remains visibly standing.
+  - label: xt
+    name_zh: "\u5c0f\u7ec4\u8ba8\u8bba"
+    color: "#EDC948"
+    definition: Student visibly faces, talks with or passes an object to a nearby peer.
+  - label: jz
+    name_zh: "\u6559\u5e08\u6307\u5bfc"
+    color: "#FF9DA7"
+    definition: Student visibly faces a teacher in an instructional, pointing or guidance interaction.
+
+observable_events:
+  - label: head_down
+    definition: Head is visibly directed toward the desk; this is not sufficient evidence of sleep.
+  - label: head_on_desk
+    definition: Head or upper body remains close to or on the desk.
+  - label: raise_hand
+    definition: One or both forearms remain above shoulder level.
+  - label: stand
+    definition: Body changes from sitting to standing or remains upright.
+  - label: out_of_seat
+    definition: Track body leaves its stable seat area.
+  - label: phone_visible
+    definition: A phone-like object is visibly held near the hands or desk.
+  - label: peer_interaction
+    definition: Two students visibly face, exchange an object or interact over time.
+  - label: unknown
+    definition: Evidence is insufficient or conflicting.
+
+forbidden_inferences:
+  - Do not label a lowered head as sleeping without visible supporting evidence.
+  - Do not infer a real student's identity from a track ID.
+  - Do not treat a single-frame pose change as a sustained anomaly.

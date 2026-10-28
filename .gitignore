@@ -1,18 +1,41 @@
-# Python
+# Local heavyweight assets retained outside source control
+/data/
+/models/
+
+# S0-S7 run state and generated deliverables
+output/
+runs/
+.runtime/
+previews/
+*.progress.json
+
+# Python caches, test state and environments
 __pycache__/
 *.py[cod]
-*.pyo
 .pytest_cache/
+.pytest_tmp*/
 .tmp_pytest*/
 .mypy_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+.venv/
+venv/
+.workbuddy/
+.git_legacy_backup/
 
-# Local datasets, model weights and generated runs
-/data/
-/models/
-/output/
-/runs/
+# Diagnostic trial media and assets
+classroom_hybrid_ai/diagnostics/**/*.jpg
+classroom_hybrid_ai/diagnostics/**/*.png
+*.assets/
+diagnostics/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Local model and media artifacts outside the retained asset roots
 *.pt
 *.pth
 *.onnx
@@ -27,21 +50,7 @@ __pycache__/
 *.mov
 *.wav
 
-# Large generated documentation and reports
-/codex_reports/
-/scripts/codex_reports/
-/docs/*
-!/docs/guides/
-!/docs/guides/*.md
-/paper_experiments/run_logs/
-paper_experiments/**/runtime_logs/
-paper_experiments/gold/agent_300_workbench/
-paper_experiments/gold/ai_agent_runs/
-paper_experiments/gold/annotation_workbench*/evidence/
-paper_experiments/gold/annotation_workbench_wave*/evidence/
-*.zip
-
-# Tool caches and local configuration
+# Editor, OS and diagnostic leftovers
 .ultralytics/
 .claude/
 .vscode/
@@ -52,13 +61,12 @@ __MACOSX/
 *.log
 *.pid
 *.tmp
+*.zip
 tmp/
 temp/
-outputs_tmp/
+_tmp_*/
+.tmp*/
 
-# Local audit/debug leftovers
-core_log.txt
-git_log*.txt
-git_status.txt
-task_*.txt
-_tmp_*
+# Local audit notes (contain host-specific paths and ACL details)
+/完整扫描报告_*.md
+/核查报告_*.md

@@ -1,8 +1,0 @@
-﻿case_id,view_code,duration_sec,baseline_tracks,trackfix_tracks,delta_tracks,baseline_actions,trackfix_actions,delta_actions,baseline_align_with_candidates,trackfix_align_with_candidates,baseline_transcript_placeholder,trackfix_transcript_placeholder,baseline_attention,trackfix_attention,trackfix_output_dir
-front__177,front,1.5,0,11,11,0,11,11,0,1,False,False,no_valid_tracks;no_actions;align_no_candidates,,output/智慧课堂学生行为数据集/random6_20260420_trackfix/front/front__177
-front__35288,front,2.04,0,3,3,0,3,3,0,1,False,False,no_valid_tracks;no_actions;align_no_candidates,,output/智慧课堂学生行为数据集/random6_20260420_trackfix/front/front__35288
-rear__0499,rear,2.8,11,12,1,36,37,1,1,1,True,True,asr_placeholder,asr_placeholder,output/智慧课堂学生行为数据集/random6_20260420_trackfix/rear/rear__0499
-teacher__0538,teacher,2.167,0,0,0,0,0,0,0,0,True,True,no_valid_tracks;no_actions;asr_placeholder;align_no_candidates,no_valid_tracks;no_actions;asr_placeholder;align_no_candidates,output/智慧课堂学生行为数据集/random6_20260420_trackfix/teacher/teacher__0538
-teacher__248311,teacher,12.933,0,0,0,0,0,0,0,0,True,True,no_valid_tracks;no_actions;asr_placeholder;align_no_candidates,no_valid_tracks;no_actions;asr_placeholder;align_no_candidates,output/智慧课堂学生行为数据集/random6_20260420_trackfix/teacher/teacher__248311
-top1__108017,top1,1.967,0,7,7,0,17,17,0,1,False,False,no_valid_tracks;no_actions;align_no_candidates,,output/智慧课堂学生行为数据集/random6_20260420_trackfix/top1/top1__108017
-top2__263180,top2,0.867,0,10,10,0,10,10,0,1,False,False,no_valid_tracks;no_actions;align_no_candidates,,output/智慧课堂学生行为数据集/random6_20260420_trackfix/top2/top2__263180

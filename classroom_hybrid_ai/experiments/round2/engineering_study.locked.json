@@ -1,0 +1,123 @@
+{
+  "schema_version": "classroom_hybrid_ai.performance_study.v1",
+  "comparison_type": "engineering_equivalence",
+  "repository_root": "E:\\PythonProject\\pythonProject\\YOLOv11",
+  "baseline_variant": "original",
+  "repeats": 3,
+  "seed": 0,
+  "delivery": "whole_pipeline_s0_s7_all_videos",
+  "videos": [
+    {
+      "id": "classroom_55598",
+      "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\data\\智慧课堂学生行为数据集\\正方视角\\55598.mp4",
+      "sha256": "2277147ba961e2c069ab26a096792777c89f620403ed3d44e3d05e7a2d0c16e6"
+    }
+  ],
+  "variants": [
+    {
+      "id": "original",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\original\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\original\\configs\\default.yaml",
+      "source_sha256": "7491a4edb3805656c1e13b32719f4c457cf7bd781a6ce9d8fd8c9e9d64409c97",
+      "config_sha256": "e55227bd8d48f3cf294855771c07a41a1bfde62e0b178916117f4408cc2d93aa",
+      "applied_changes": [],
+      "python_files_compiled": 40,
+      "import_validation": "passed",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        }
+      ]
+    },
+    {
+      "id": "request_overhead",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\request_overhead\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\request_overhead\\configs\\default.yaml",
+      "source_sha256": "ed15bd9ffd06ba977f434a898581852f6cacfd22d25a7e391554963f95471977",
+      "config_sha256": "e55227bd8d48f3cf294855771c07a41a1bfde62e0b178916117f4408cc2d93aa",
+      "applied_changes": [
+        "adapters/locate_anything.py:_local_answer; routine_cleanup_removed_exception_cleanup_retained"
+      ],
+      "python_files_compiled": 40,
+      "import_validation": "passed",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        }
+      ]
+    },
+    {
+      "id": "video_cache",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\video_cache\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\video_cache\\configs\\default.yaml",
+      "source_sha256": "fbf67934fb3481087b9783fd3fc60c05428d02c746685b935139a0eb1823cc2c",
+      "config_sha256": "c7bf9d34fca0562eb49b4956805014ccf305d48b3678a4ba372163c4a7493055",
+      "applied_changes": [
+        "video.py",
+        "evidence.py",
+        "performance.py",
+        "research_stages.py:_run_s1",
+        "research_stages.py:_run_s4:two_preprocess_workers_queue_two",
+        "configs/default.yaml:consumed_video_scan_flags"
+      ],
+      "python_files_compiled": 41,
+      "import_validation": "passed",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        }
+      ]
+    },
+    {
+      "id": "combined",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\combined\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_engineering_variants_20260913\\combined\\configs\\default.yaml",
+      "source_sha256": "89e7d5e9294eececa9f83fc47dd6472f5227c3fcb49748267c847fb1ce10a0f6",
+      "config_sha256": "c7bf9d34fca0562eb49b4956805014ccf305d48b3678a4ba372163c4a7493055",
+      "applied_changes": [
+        "adapters/locate_anything.py:_local_answer; routine_cleanup_removed_exception_cleanup_retained",
+        "video.py",
+        "evidence.py",
+        "performance.py",
+        "research_stages.py:_run_s1",
+        "research_stages.py:_run_s4:two_preprocess_workers_queue_two",
+        "configs/default.yaml:consumed_video_scan_flags"
+      ],
+      "python_files_compiled": 41,
+      "import_validation": "passed",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "locate",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\locate-anything-3b",
+          "sha256": "30b8d82954bf26e85187d149e58afffca7fef4cf7ff49edc5199fb0ad4adcea1"
+        }
+      ]
+    }
+  ]
+}

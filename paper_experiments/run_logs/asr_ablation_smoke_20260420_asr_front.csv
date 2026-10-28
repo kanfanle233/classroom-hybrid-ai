@@ -1,2 +1,0 @@
-﻿backend,case_id,view_code,duration_sec,returncode,elapsed_sec,transcript_segments,transcript_non_empty,placeholder,source,transcript_path,log_path
-whisper,front__23081,front,25.533,0,10.24,11,11,0,whisper:small,output/asr_ablation/smoke_20260420_asr_front/whisper/front/front__23081/transcript.jsonl,paper_experiments/run_logs/asr_ablation_smoke_20260420_asr_front/whisper_01_front__23081.log

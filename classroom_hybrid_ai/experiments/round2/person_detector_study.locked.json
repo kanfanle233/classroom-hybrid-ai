@@ -1,0 +1,57 @@
+{
+  "schema_version": "classroom_hybrid_ai.performance_study.v1",
+  "comparison_type": "algorithm_quality_cost",
+  "repository_root": "E:\\PythonProject\\pythonProject\\YOLOv11",
+  "baseline_variant": "yolo26n_only",
+  "repeats": 3,
+  "seed": 0,
+  "delivery": "whole_pipeline_s0_s7_all_videos",
+  "videos": [
+    {
+      "id": "classroom_55598",
+      "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\data\\智慧课堂学生行为数据集\\正方视角\\55598.mp4",
+      "sha256": "2277147ba961e2c069ab26a096792777c89f620403ed3d44e3d05e7a2d0c16e6"
+    }
+  ],
+  "variants": [
+    {
+      "id": "yolo26n_only",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\localization_yolo_only.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "a3bfe582e41ef623c0e04940ca755a19c17a4320974315122dc107f8ff222a1e",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "yolo",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\candidates\\yolo26-aed8ed10\\yolo26n-pose.pt",
+          "sha256": "eb3bb8268828aeaf515cec23a4bfafd793944a86fe9af94ba7823609c14522a9"
+        }
+      ]
+    },
+    {
+      "id": "yolo26m_only",
+      "source_path": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\src",
+      "config": "E:\\PythonProject\\pythonProject\\YOLOv11\\.runtime\\round2_candidates\\20260913T071627Z\\classroom_hybrid_ai\\configs\\localization_yolo26m_only.yaml",
+      "source_sha256": "f81c0134039a2491185dd2c56a7e7041b00603484fe54f6be9403ebe8a8fa9a8",
+      "config_sha256": "eef9642bd0f816e1c47d7f766fa64a5570ccffaab4142dab66f46d0f4bad7538",
+      "models": [
+        {
+          "id": "qwen",
+          "path": "E:\\PythonProject\\pythonProject\\YOLOv11\\models\\external\\qwen3.5-9b-bnb-4bit-3c78dfb3",
+          "sha256": "6c4d6f8dc2a70f421f36b3218a954aef008bad57d9efa7d1f7a033664fcac5ca"
+        },
+        {
+          "id": "yolo",
+          "path": "E:\\PythonProject\\pythonProject\\yolo实验\\models\\pretrained\\yolo26\\yolo26m.pt",
+          "sha256": "401cea9ab23ad19246ff7744859816bc599f350e93c9dd30367b6f0a0745d0b7"
+        }
+      ]
+    }
+  ],
+  "purpose": "full-video person-detector diagnostic; zero student confirmation, no action accuracy or Locate-baseline speed claim"
+}

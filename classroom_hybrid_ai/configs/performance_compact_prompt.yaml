@@ -1,0 +1,207 @@
+# Experimental benchmark configuration. Independent action-quality gate has not passed.
+evidence:
+  after_seconds: 0.75
+  before_seconds: 0.75
+  crop_context_ratio: 0.35
+  frames_per_event: 3
+  include_annotated_context: true
+  include_joint_roi_for_interactions: true
+  include_subject_sequence: true
+  jpeg_quality: 90
+  maximum_context_side: 768
+  maximum_crop_side: 448
+fusion:
+  allowed_review_statuses:
+  - confirmed
+  - rejected
+  - uncertain
+  disagreement_result: uncertain
+  insufficient_evidence_result: uncertain
+  qwen_self_reported_confidence_is_probability: false
+  require_strict_json: true
+locate_anything:
+  auto_start_service: true
+  backend: http
+  enabled: true
+  experimental_nf4: true
+  generation_mode: hybrid
+  health_url: http://127.0.0.1:8011/health
+  low_confidence_only: true
+  max_new_tokens: 256
+  max_scene_images: 32
+  maximum_image_side: null
+  mode: local_isolated_service
+  model_dir: models/external/locate-anything-3b
+  prompts:
+  - student
+  release_cuda_cache: false
+  request_timeout_seconds: 180
+  require_unload_ack_before_qwen: true
+  required: true
+  run_on_first_frame: true
+  run_on_scene_change: true
+  service_start_timeout_seconds: 30
+  service_url: http://127.0.0.1:8011/locate
+  shutdown_url: http://127.0.0.1:8011/shutdown
+  unload_after_stage: true
+  unload_url: http://127.0.0.1:8011/unload
+locate_first:
+  change_anchor_min_gap_seconds: 0.5
+  change_anchor_sample_stride: 10
+  change_anchor_threshold: 0.08
+  exhaustive_max_screenshots: 300
+  jpeg_quality: 95
+  locate_cap: 1500
+  max_gap_seconds: 2.0
+  maximum_center_distance: 0.75
+  maximum_screenshots: 1500
+  minimum_iou: 0.1
+  minimum_match_margin: 0.1
+  minimum_match_score: 0.3
+  qwen_every_screenshot: false
+  reserved_change_events: 300
+  screenshot_frame_stride: 10
+open_vocabulary:
+  candidate_bucket_seconds: 300.0
+  classification_pass: true
+  discovery_pass: false
+  embedding_backend: cpu
+  embedding_model: BAAI/bge-small-zh-v1.5
+  embedding_model_dir: models/external/bge-small-zh-v1.5
+  enabled: false
+  max_hold_seconds: 2.0
+  max_unobserved_bridge_seconds: 1.0
+  maximum_session_actions: 24
+  open_vocab_gate:
+    benchmark_verified: false
+    enabled: false
+    provider: none
+  semantic_retrieval_threshold: 0.72
+  semantic_retrieval_top_k: 5
+  shared_promotion_min_evidence_quality: 0.7
+  shared_promotion_min_windows: 2
+  shared_promotion_same_student_gap_seconds: 10.0
+  total_qwen_requests_maximum: 240
+  total_qwen_requests_minimum: 48
+  total_qwen_requests_per_minute: 2.0
+paths:
+  action_registry_root: .runtime/classroom_hybrid_ai/action_registry
+  behavior_taxonomy: configs/behaviors.yaml
+  dataset_root: data/智慧课堂学生行为数据集
+  model_manifest: configs/models.local.yaml
+  output_root: output/classroom_hybrid_ai
+  repository_root: ..
+performance:
+  preprocess_queue_size: 2
+  preprocess_workers: 2
+  profile_model_timings: false
+pipeline:
+  primary_detector: locate_anything
+profiles:
+  action_profiles: configs/action_profiles.yaml
+qwen:
+  action_mode: fixed_eight
+  api_key: EMPTY
+  backend: local
+  batch_size: 1
+  cpu_offload_gib: 5.0
+  device: cuda:0
+  device_map_policy: explicit_qwen35_9b_8gb
+  disk_offload_dir: .runtime/classroom_hybrid_ai/qwen35_9b_offload
+  enable_thinking: false
+  enabled: true
+  gpu_memory_limit_gib: 6.2
+  max_input_images: 1
+  max_new_tokens: 128
+  mode: local_bnb4
+  model_dir: models/external/qwen3.5-9b-bnb-4bit-3c78dfb3
+  model_family: qwen3.5
+  model_size: 9b
+  oom_image_fallback:
+  - 1
+  process_isolation: true
+  prompt_version: compact_v1
+  quantization: bnb4
+  release_cuda_cache: false
+  request_timeout_seconds: 300
+  retry_on_oom: true
+  service_url: http://127.0.0.1:8010/v1
+  stateless_requests: true
+  unload_after_stage: true
+qwen_candidates:
+  maximum_any_class_f1_drop_pp: 2.0
+  minimum_event_macro_f1_gain_pp: 3.0
+research:
+  mode: production_adaptive
+  profile: core8_v1
+  random_seed: 0
+  strict: true
+runtime:
+  device: cuda:0
+  execution_layout: sequential_offline_passes
+  gpu_budget_gib: 7.4
+  gpu_index: 0
+  max_gpu_workers: 1
+  network_at_runtime: false
+  python_executable: E:/miniconda/envs/py310/python.exe
+  yolo_config_dir: .runtime/ultralytics
+schema_version: classroom_hybrid_ai.config.v1
+tracking:
+  max_appearance_distance: 0.35
+  max_normalized_center_distance: 0.6
+  max_stitch_gap_seconds: 2.0
+  minimum_match_margin: 0.15
+triggering:
+  cooldown_seconds: 8.0
+  fixed_frame_stride: 10
+  forced_audit_seconds: 120.0
+  high_threshold: 0.72
+  k_of_m:
+  - 4
+  - 6
+  low_threshold: 0.45
+  max_candidates_per_video: 500
+  max_tracks_per_fixed_stride: 4
+  max_tracks_per_periodic_audit: 2
+  merge_window_seconds: 1.0
+  mode: hybrid
+  new_track_stable_seconds: 1.0
+  periodic_audit_seconds: 30.0
+  preserve_periodic_audit: true
+  preserve_unknown_candidates: true
+  require_full_window: true
+  reset_gap_seconds: 0.5
+  round_robin_periodic_tracks: true
+video:
+  decode_backend: opencv
+  detector_frame_stride: 1
+  encoder_backend: opencv
+  evidence_decode_strategy: sequential
+  ffmpeg_path: null
+  maximum_frame_side: 1280
+  preview_decode_strategy: auto
+  scene_change_threshold: 0.32
+  screenshot_cache_bytes: 2147483648
+  shared_screenshot_scan: true
+yolo:
+  anomaly_class_map: {}
+  anomaly_frame_stride: 5
+  anomaly_model: null
+  anomaly_track_iou_threshold: 0.2
+  confidence: 0.2
+  image_size: 960
+  keypoint_motion_min_gap_seconds: 0.25
+  keypoint_motion_threshold: 0.15
+  keypoint_motion_window_seconds: 0.5
+  persist_tracks: true
+  proxy_candidate_rules:
+    enabled: true
+    head_down: true
+    interaction_change: true
+    keypoint_motion: true
+    low_detection_confidence: 0.28
+    raised_hand: true
+    standing: true
+  track_epoch_on_scene_change: true
+  tracker: bytetrack.yaml
+  tracker_model: models/candidates/yolo26-aed8ed10/yolo26n-pose.pt

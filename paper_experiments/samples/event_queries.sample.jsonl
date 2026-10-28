@@ -1,3 +1,0 @@
-{"event_id":"e_000123","schema_version":"2026-04-01","query_text":"student raises hand","event_type":"raise_hand","trigger_words":["raise","hand"],"timestamp":12.4,"start":11.9,"end":12.8,"confidence":0.86,"source":"asr"}
-{"event_id":"e_000124","schema_version":"2026-04-01","query_text":"student keeps head down to write","event_type":"head_down","trigger_words":["head","down","write"],"timestamp":18.1,"start":17.5,"end":18.6,"confidence":0.74,"source":"asr"}
-

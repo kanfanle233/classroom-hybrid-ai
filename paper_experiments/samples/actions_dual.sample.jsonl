@@ -1,5 +1,0 @@
-{"track_id":7,"action":"raise_hand","start_time":11.8,"end_time":12.9,"action_confidence":0.88,"confidence":0.88,"conf":0.88}
-{"track_id":11,"action":"look_down","start_time":11.9,"end_time":12.7,"action_confidence":0.63,"confidence":0.63,"conf":0.63}
-{"track_id":11,"action":"head_down","start_time":17.6,"end_time":18.8,"action_confidence":0.79,"confidence":0.79,"conf":0.79}
-{"track_id":7,"action":"read","start_time":17.9,"end_time":18.2,"action_confidence":0.41,"confidence":0.41,"conf":0.41}
-

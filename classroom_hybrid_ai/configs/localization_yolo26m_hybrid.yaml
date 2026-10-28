@@ -1,0 +1,218 @@
+schema_version: classroom_hybrid_ai.config.v1
+pipeline:
+  primary_detector: hybrid
+  localization_route: yolo_locate_hybrid
+research:
+  profile: core8_v1
+  mode: production_adaptive
+  strict: true
+  random_seed: 0
+profiles:
+  action_profiles: configs/action_profiles.yaml
+locate_first:
+  screenshot_frame_stride: 10
+  maximum_screenshots: 1500
+  jpeg_quality: 95
+  qwen_every_screenshot: false
+  max_gap_seconds: 2.0
+  minimum_iou: 0.1
+  maximum_center_distance: 0.75
+  minimum_match_score: 0.3
+  minimum_match_margin: 0.1
+  locate_cap: 1500
+  reserved_change_events: 300
+  change_anchor_threshold: 0.08
+  change_anchor_sample_stride: 10
+  change_anchor_min_gap_seconds: 0.5
+  exhaustive_max_screenshots: 300
+runtime:
+  python_executable: E:/miniconda/envs/py310/python.exe
+  device: cuda:0
+  gpu_index: 0
+  gpu_budget_gib: 7.4
+  max_gpu_workers: 1
+  network_at_runtime: false
+  execution_layout: sequential_offline_passes
+  yolo_config_dir: .runtime/ultralytics
+paths:
+  repository_root: ..
+  dataset_root: data/智慧课堂学生行为数据集
+  output_root: output/classroom_hybrid_ai
+  model_manifest: configs/models.local.yaml
+  action_registry_root: .runtime/classroom_hybrid_ai/action_registry
+  behavior_taxonomy: configs/behaviors.yaml
+video:
+  detector_frame_stride: 1
+  maximum_frame_side: 1280
+  scene_change_threshold: 0.32
+  decode_backend: opencv
+  shared_screenshot_scan: true
+  screenshot_cache_bytes: 2147483648
+  preview_decode_strategy: auto
+  evidence_decode_strategy: sequential
+  encoder_backend: opencv
+  ffmpeg_path: null
+performance:
+  profile_model_timings: false
+  preprocess_workers: 2
+  preprocess_queue_size: 2
+yolo:
+  tracker_model: E:/PythonProject/pythonProject/yolo实验/models/pretrained/yolo26/yolo26m.pt
+  anomaly_model: null
+  anomaly_class_map: {}
+  anomaly_frame_stride: 5
+  anomaly_track_iou_threshold: 0.2
+  keypoint_motion_window_seconds: 0.5
+  keypoint_motion_min_gap_seconds: 0.25
+  keypoint_motion_threshold: 0.15
+  tracker: bytetrack.yaml
+  confidence: 0.2
+  image_size: 960
+  persist_tracks: true
+  track_epoch_on_scene_change: true
+  proxy_candidate_rules:
+    enabled: true
+    head_down: true
+    standing: true
+    raised_hand: true
+    low_detection_confidence: 0.28
+    keypoint_motion: true
+    interaction_change: true
+tracking:
+  max_stitch_gap_seconds: 2.0
+  max_normalized_center_distance: 0.6
+  max_appearance_distance: 0.35
+  minimum_match_margin: 0.15
+locate_anything:
+  enabled: true
+  backend: http
+  mode: local_isolated_service
+  model_dir: models/external/locate-anything-3b
+  health_url: http://127.0.0.1:8011/health
+  service_url: http://127.0.0.1:8011/locate
+  unload_url: http://127.0.0.1:8011/unload
+  shutdown_url: http://127.0.0.1:8011/shutdown
+  auto_start_service: true
+  service_start_timeout_seconds: 30
+  require_unload_ack_before_qwen: true
+  required: true
+  experimental_nf4: true
+  request_timeout_seconds: 180
+  generation_mode: hybrid
+  max_new_tokens: 256
+  maximum_image_side: null
+  release_cuda_cache: false
+  run_on_first_frame: true
+  run_on_scene_change: true
+  low_confidence_only: true
+  prompts:
+  - student
+  max_scene_images: 32
+  unload_after_stage: true
+open_vocabulary:
+  enabled: false
+  discovery_pass: false
+  classification_pass: true
+  maximum_session_actions: 24
+  shared_promotion_min_windows: 2
+  shared_promotion_same_student_gap_seconds: 10.0
+  shared_promotion_min_evidence_quality: 0.7
+  embedding_model: BAAI/bge-small-zh-v1.5
+  embedding_model_dir: models/external/bge-small-zh-v1.5
+  embedding_backend: cpu
+  semantic_retrieval_threshold: 0.72
+  semantic_retrieval_top_k: 5
+  max_hold_seconds: 2.0
+  max_unobserved_bridge_seconds: 1.0
+  candidate_bucket_seconds: 300.0
+  total_qwen_requests_per_minute: 2.0
+  total_qwen_requests_minimum: 48
+  total_qwen_requests_maximum: 240
+  open_vocab_gate:
+    enabled: false
+    provider: none
+    benchmark_verified: false
+triggering:
+  mode: hybrid
+  fixed_frame_stride: 10
+  max_tracks_per_fixed_stride: 4
+  periodic_audit_seconds: 30.0
+  max_tracks_per_periodic_audit: 2
+  forced_audit_seconds: 120.0
+  round_robin_periodic_tracks: true
+  high_threshold: 0.72
+  low_threshold: 0.45
+  k_of_m:
+  - 4
+  - 6
+  require_full_window: true
+  cooldown_seconds: 8.0
+  reset_gap_seconds: 0.5
+  new_track_stable_seconds: 1.0
+  merge_window_seconds: 1.0
+  preserve_periodic_audit: true
+  preserve_unknown_candidates: true
+  max_candidates_per_video: 500
+evidence:
+  before_seconds: 0.75
+  after_seconds: 0.75
+  frames_per_event: 3
+  crop_context_ratio: 0.35
+  maximum_crop_side: 448
+  maximum_context_side: 768
+  include_annotated_context: true
+  include_subject_sequence: true
+  include_joint_roi_for_interactions: true
+  jpeg_quality: 90
+qwen:
+  enabled: true
+  model_family: qwen3.5
+  model_size: 9b
+  backend: local
+  mode: local_bnb4
+  model_dir: models/external/qwen3.5-9b-bnb-4bit-3c78dfb3
+  service_url: http://127.0.0.1:8010/v1
+  api_key: EMPTY
+  request_timeout_seconds: 300
+  quantization: bnb4
+  device: cuda:0
+  device_map_policy: explicit_qwen35_9b_8gb
+  process_isolation: true
+  release_cuda_cache: false
+  gpu_memory_limit_gib: 6.2
+  cpu_offload_gib: 5.0
+  disk_offload_dir: .runtime/classroom_hybrid_ai/qwen35_9b_offload
+  batch_size: 1
+  stateless_requests: true
+  enable_thinking: false
+  action_mode: fixed_eight
+  prompt_version: legacy_v1
+  max_input_images: 1
+  max_new_tokens: 128
+  retry_on_oom: true
+  oom_image_fallback:
+  - 1
+  unload_after_stage: true
+qwen_candidates:
+  minimum_event_macro_f1_gain_pp: 3.0
+  maximum_any_class_f1_drop_pp: 2.0
+fusion:
+  require_strict_json: true
+  allowed_review_statuses:
+  - confirmed
+  - rejected
+  - uncertain
+  qwen_self_reported_confidence_is_probability: false
+  disagreement_result: uncertain
+  insufficient_evidence_result: uncertain
+research_budget:
+  selection_mode: fair
+  minimum: 48
+  maximum: 240
+  per_student: 2.0
+  per_minute: 2.0
+localization:
+  batch_size: 1
+  audit_interval_seconds: 30.0
+  low_confidence: 0.28
+  model_manifest_key: yolo26m_external_detection

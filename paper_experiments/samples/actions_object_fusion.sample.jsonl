@@ -1,6 +1,0 @@
-{"sample_id":"a1","track_id":1,"action":"head_down","conf":0.28,"t":5.0,"start_time":4.8,"end_time":5.4,"gt_action":"phone"}
-{"sample_id":"a2","track_id":2,"action":"read","conf":0.62,"t":8.0,"start_time":7.6,"end_time":8.4,"gt_action":"read"}
-{"sample_id":"a3","track_id":3,"action":"note","conf":0.46,"t":11.0,"start_time":10.7,"end_time":11.3,"gt_action":"note"}
-{"sample_id":"a4","track_id":4,"action":"phone","conf":0.71,"t":14.0,"start_time":13.7,"end_time":14.2,"gt_action":"phone"}
-{"sample_id":"a5","track_id":5,"action":"chat","conf":0.66,"t":16.0,"start_time":15.5,"end_time":16.5,"gt_action":"chat"}
-

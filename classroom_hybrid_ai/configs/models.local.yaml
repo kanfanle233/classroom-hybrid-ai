@@ -1,0 +1,84 @@
+schema_version: classroom_hybrid_ai.models.v1
+runtime_network_allowed: false
+
+models:
+  yolo26m_external_detection:
+    role: experimental_screenshot_person_detection
+    repository: Ultralytics/assets
+    revision: v8.4.0
+    path: E:/PythonProject/pythonProject/yolo实验/models/pretrained/yolo26/yolo26m.pt
+    sha256: 401cea9ab23ad19246ff7744859816bc599f350e93c9dd30367b6f0a0745d0b7
+    weights_bytes: 44255705
+    status: candidate
+    limitation: generic person detector; raw track IDs are not confirmed student identities
+
+  yolo26_pose:
+    role: person_pose_tracking
+    repository: Ultralytics/YOLO26
+    revision: aed8ed1027f2b55ee78d8fcac93be889251d1e05
+    path: models/candidates/yolo26-aed8ed10/yolo26n-pose.pt
+    sha256: eb3bb8268828aeaf515cec23a4bfafd793944a86fe9af94ba7823609c14522a9
+    status: candidate
+    limitation: COCO pose model; no classroom anomaly labels
+
+  yolo26_objects:
+    role: generic_object_detection
+    repository: Ultralytics/YOLO26
+    revision: aed8ed1027f2b55ee78d8fcac93be889251d1e05
+    path: models/candidates/yolo26-aed8ed10/yolo26l.pt
+    sha256: 9fe3c544f2b19bebad7ea41e76d7ad3d88b7c2f10d11d24430c5311f6b32db26
+    status: candidate
+    limitation: COCO objects only; no classroom anomaly labels
+
+  yolo26_classroom_anomaly:
+    role: known_classroom_anomaly_candidate_trigger
+    path: null
+    status: missing_requires_local_training
+    limitation: must be trained and calibrated on the local classroom taxonomy
+
+  locate_anything:
+    role: optional_object_and_context_localization
+    repository: nvidia/LocateAnything-3B
+    revision: c32291ca5e996f5a7a485845b4f57a233936bba0
+    path: models/external/locate-anything-3b
+    package_manifest: models/external/locate-anything-3b/locate_anything_nf4_package.v1.json
+    quantization: bitsandbytes_nf4
+    status: local
+    limitation: localization only; no tracking ID, OCR transcription, or GUI recognition
+
+  bge_small_zh_v1_5:
+    role: cpu_only_open_vocabulary_candidate_retrieval
+    repository: BAAI/bge-small-zh-v1.5
+    revision: 7999e1d3359715c523056ef9478215996d62a620
+    path: models/external/bge-small-zh-v1.5
+    weight_file: models/external/bge-small-zh-v1.5/model.safetensors
+    sha256: 354763b9b1357bc9c44f62c6be2276321081ed2567773608c0d0785b61d5a026
+    weights_bytes: 95827648
+    device: cpu
+    status: local
+    license: MIT
+    limitation: semantic retrieval only; final synonym merging still requires two order-inverted Qwen text votes
+
+  qwen35_9b_bnb4:
+    role: stateless_visual_action_review
+    repository: techwithsergiu/Qwen3.5-9B-bnb-4bit
+    base_model: Qwen/Qwen3.5-9B
+    revision: 3c78dfb3e32c496a2438fb1790859eff805284cf
+    path: models/external/qwen3.5-9b-bnb-4bit-3c78dfb3
+    weight_file: models/external/qwen3.5-9b-bnb-4bit-3c78dfb3/model.safetensors
+    sha256: f5945e52ef0fb636fc73e3ae2a042d4ceefb36ffaa87722a441c64ddbf0cbf4d
+    weights_bytes: 8552238594
+    quantization: bitsandbytes_4bit
+    status: local
+    license: Apache-2.0
+    limitation: third-party quantization; validate runtime stability on the target hardware and action quality on held-out classroom data before release
+
+  qwen35_35b_a3b_awq4_reference:
+    role: optional_moe_visual_action_review_candidate
+    repository: cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit
+    base_model: Qwen/Qwen3.5-35B-A3B
+    revision: e0514eec569a2622b84a93f399c696a699922e0c
+    path: null
+    quantization: awq_4bit
+    status: hardware_blocked_reference_only
+    limitation: 48.5GB repository; 8GB VRAM and 16GB system RAM cannot host all experts

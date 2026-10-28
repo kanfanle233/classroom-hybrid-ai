@@ -1,2 +1,0 @@
-{"frame":310,"t":12.4,"uq_frame":0.43,"persons":[{"track_id":7,"uq_track":0.41,"uq_conf":0.36,"uq_motion":0.38,"uq_kpt":0.49,"log_sigma2":-1.12},{"track_id":11,"uq_track":0.52,"uq_conf":0.57,"uq_motion":0.44,"uq_kpt":0.55}]}
-{"frame":311,"t":12.44,"uq_frame":0.39,"persons":[{"track_id":7,"uq_track":0.37,"uq_conf":0.31,"uq_motion":0.35,"uq_kpt":0.43},{"track_id":11,"uq_track":0.48,"uq_conf":0.51,"uq_motion":0.43,"uq_kpt":0.50}]}

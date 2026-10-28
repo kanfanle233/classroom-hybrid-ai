@@ -1,6 +1,0 @@
-﻿case_id,view_code,task_count,missing_task_count,transcript_empty_case,actions_empty_case,query_missing_tasks,align_missing_tasks,verified_missing_tasks,overlay_video_found,timeline_chart_exists,annotation_priority_rank,priority_score,priority_reason,task_row_ids
-teacher__0001,teacher,1,0,False,False,0,0,0,1,1,1,0.050,single-task case with complete core evidence; best for annotator warm-up,6
-rear__0001,rear,4,0,False,False,0,0,0,4,4,2,0.200,4 tasks and complete core evidence; good second step for boundary consistency,"2,3,4,5"
-top2__250184,top2,12,12,False,False,0,0,0,0,12,3,13.100,largest workload (12 tasks); process after calibration to keep labels consistent,"8,9,10,11,12,13,14,15,16,17,18,19"
-top1__0001,top1,1,1,False,True,0,0,0,1,1,4,1.050,single-task but sparse action/align evidence; annotate after stable rubric,7
-front__001,front,1,1,True,False,0,0,0,1,1,5,3.050,ASR transcript is empty; keep for conservative final pass,1
