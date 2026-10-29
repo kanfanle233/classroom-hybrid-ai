@@ -1055,6 +1055,13 @@ class ResearchStageExecutor:
                 if review is not None:
                     reused[candidate.event_id] = review
         pending = [candidate for candidate in candidates if candidate.event_id not in reused]
+        stop_file_value = self.spec.config.get("qwen.stop_file")
+        stop_file = (
+            self.spec.config.resolve(stop_file_value)
+            if stop_file_value
+            else self.spec.config.resolve(".runtime/classroom_hybrid_ai/qwen.stop")
+        )
+        stop_check = (lambda: stop_file.is_file()) if stop_file is not None else None
         self._report_progress(
             "S5",
             len(reused),
@@ -1111,23 +1118,45 @@ class ResearchStageExecutor:
                         len(candidates),
                         f"S5 Qwen 响应已落盘 {len(reused) + processed}/{len(candidates)}",
                     ),
+                    stop_check=stop_check,
                 )
                 qwen_stats = {**qwen_stats, "actual_calls": call_budget.used}
         finally:
+            completed_requests = sum(
+                1 for candidate in candidates
+                if (response_dir / f"{candidate.event_id}.json").is_file()
+            )
             worker_pid = getattr(adapter, "pid", None) if adapter is not None else None
             if adapter is not None:
+                self._report_progress(
+                    "S5",
+                    completed_requests,
+                    len(candidates),
+                    f"S5 请求完成 {completed_requests}/{len(candidates)}，正在释放 Qwen 模型",
+                )
                 release_receipt = release_model(adapter)
                 release_receipt.update({
                     "worker_pid": worker_pid,
                     "worker_exitcode": getattr(adapter, "exitcode", None),
                     "worker_isolated": adapter.__class__.__name__ == "QwenProcessClient",
                 })
+                self._report_progress(
+                    "S5",
+                    completed_requests,
+                    len(candidates),
+                    f"S5 Qwen 模型已释放，退出码={release_receipt.get('worker_exitcode')}",
+                )
             if gpu_lease is not None:
                 gpu_lease.release()
             atomic_write_json(
                 self.spec.run_dir / "diagnostics" / "qwen_worker_receipt.v1.json",
                 release_receipt,
             )
+        if qwen_stats.get("interruption_reason") == "stop_requested":
+            # The user stop is a boundary, not a failed Qwen call: every
+            # already-durable response stays reusable and S5 must be retried
+            # from disk on resume instead of being recorded as successful.
+            raise StageExecutionError("stage_s5_stopped_by_user")
         by_event = {**reused, **{review.candidate_event_id: review for review in pending_reviews}}
         ordered_reviews = [by_event[candidate.event_id] for candidate in candidates if candidate.event_id in by_event]
         if len(ordered_reviews) != len(candidates):

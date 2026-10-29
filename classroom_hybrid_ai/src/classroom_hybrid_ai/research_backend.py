@@ -422,7 +422,22 @@ class ResearchBackend:
                     global_fingerprints=fingerprints,
                     upstream_receipt_sha256=upstream_sha,
                 )
-                attempt = ledger.begin_attempt(stage_id, expected_input)
+                attempt_components: dict[str, Any] = {
+                    "stage_id": stage_id,
+                    "code_sha256": fingerprints[f"stage_code:{stage_id}"],
+                    "config_sha256": fingerprints[f"stage_config:{stage_id}"],
+                    "upstream_receipt_sha256": upstream_sha,
+                }
+                if stage_id == "S2":
+                    attempt_components["locate_model_sha256"] = fingerprints["locate_model_sha256"]
+                if stage_id == "S5":
+                    attempt_components["qwen_model_sha256"] = fingerprints["qwen_model_sha256"]
+                    attempt_components["profile_sha256"] = fingerprints["profile_sha256"]
+                attempt = ledger.begin_attempt(
+                    stage_id,
+                    expected_input,
+                    components=attempt_components,
+                )
                 ledger.begin(
                     stage_id,
                     total_units=None,
@@ -430,6 +445,7 @@ class ResearchBackend:
                     metadata={
                         "input_fingerprint_sha256": expected_input,
                         "partial_outputs_reusable": attempt["partial_outputs_reusable"],
+                        "fingerprint_mismatch": list(attempt["fingerprint_mismatch"]),
                     },
                 )
                 outcome: StageOutcome = executor.execute(

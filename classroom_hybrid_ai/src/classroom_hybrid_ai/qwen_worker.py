@@ -22,6 +22,25 @@ class QwenWorkerError(RuntimeError):
     """A request failed inside the isolated Qwen process."""
 
 
+def _apply_cuda_alloc_conf(alloc_conf: str) -> str | None:
+    """Apply the allocator tuning before the worker touches CUDA.
+
+    ``PYTORCH_CUDA_ALLOC_CONF`` is only read when the allocator is created, so
+    this has to run inside the child process ahead of any torch import.  An
+    operator-supplied value always wins; the configured default is a fallback
+    for the isolated worker only and never leaks into the parent process.
+    """
+
+    value = str(alloc_conf or "").strip()
+    if not value:
+        return None
+    existing = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "").strip()
+    if existing:
+        return existing
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = value
+    return value
+
+
 def _cuda_memory_metrics(*, probe: bool = True) -> dict[str, Any]:
     """Return allocator metrics from the process that owns the model."""
 
@@ -121,11 +140,15 @@ def _worker_main(connection: Connection, adapter_kwargs: Mapping[str, Any]) -> N
         return metrics
     try:
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+        # Must precede the adapter import: the allocator reads its config the
+        # first time CUDA initializes inside this process.
+        worker_kwargs = dict(adapter_kwargs)
+        _apply_cuda_alloc_conf(str(worker_kwargs.pop("cuda_alloc_conf", "") or ""))
         started = time.perf_counter()
         from .adapters.qwen import Qwen35Adapter
         lifecycle["timings_seconds"]["adapter_import"] = time.perf_counter() - started
         started = time.perf_counter()
-        adapter = Qwen35Adapter(**dict(adapter_kwargs))
+        adapter = Qwen35Adapter(**worker_kwargs)
         lifecycle["timings_seconds"]["adapter_initialization"] = time.perf_counter() - started
         while True:
             try:
@@ -474,4 +497,4 @@ class QwenProcessClient:
         self.close()
 
 
-__all__ = ["QwenProcessClient", "QwenWorkerError", "_cuda_memory_metrics"]
+__all__ = ["QwenProcessClient", "QwenWorkerError", "_apply_cuda_alloc_conf", "_cuda_memory_metrics"]

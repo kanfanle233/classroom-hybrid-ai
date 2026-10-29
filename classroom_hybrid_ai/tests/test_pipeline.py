@@ -603,6 +603,140 @@ def test_qwen_progress_is_reported_only_after_each_response_is_durable(tmp_path:
     assert progress == [(1, 2), (2, 2)]
 
 
+def test_qwen_pass_stops_at_request_boundary_and_keeps_durable_responses(tmp_path: Path) -> None:
+    from classroom_hybrid_ai.contracts import CandidateEvent
+
+    config = _temp_config(tmp_path)
+    store = RunStore(tmp_path / "runs", "qwen-stop", "test-qwen-stop")
+    evidence = []
+    candidates = []
+    for ordinal, event_id in enumerate(("e1", "e2")):
+        event_dir = store.evidence_dir / event_id
+        event_dir.mkdir(parents=True)
+        items = []
+        for frame_index in range(3):
+            image_path = event_dir / f"subject_{frame_index}.jpg"
+            assert cv2.imwrite(str(image_path), np.zeros((16, 16, 3), dtype=np.uint8))
+            items.append({"kind": "subject_crop", "path": str(image_path), "frame_index": frame_index})
+        evidence.append({"event_id": event_id, "track_id": f"s0:{ordinal + 1}", "status": "ok", "evidence": items})
+        candidates.append(CandidateEvent(
+            event_id=event_id,
+            track_id=f"s0:{ordinal + 1}",
+            event_type="review",
+            trigger_frame_index=ordinal,
+            trigger_pts_seconds=float(ordinal),
+        ))
+
+    class StopQwen:
+        calls = 0
+
+        def review(self, *_args, **_kwargs):
+            type(self).calls += 1
+            return {
+                "decision": "uncertain", "behavior": "UNKNOWN", "rationale": "证据不足",
+                "evidence_frame_indices": [0, 1, 2], "observability": "none",
+                "reviewer": "qwen3.5", "schema_valid": True,
+            }
+
+        def close(self) -> None:
+            return None
+
+    reviews, stats = _qwen_pass(
+        config,
+        candidates,
+        evidence,
+        store,
+        skip=False,
+        adapter=StopQwen(),
+        response_contract="classification",
+        expected_vocabulary_sha256="digest",
+        allowed_action_ids={"a_known"},
+        release_adapter=True,
+        resolve_conflicts=False,
+        stop_check=lambda: StopQwen.calls >= 1,
+    )
+    assert StopQwen.calls == 1
+    assert stats["interruption_reason"] == "stop_requested"
+    assert stats["executed_requests"] == 1
+    assert len(reviews) == 1
+    assert (store.run_dir / "responses" / "e1.json").is_file()
+    assert not (store.run_dir / "responses" / "e2.json").exists()
+
+
+def test_run_s5_stop_file_releases_model_and_requires_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from classroom_hybrid_ai.contracts import CandidateEvent
+    from classroom_hybrid_ai.research_backend import ResearchBackend
+    import classroom_hybrid_ai.research_stages as stages_module
+
+    config = _temp_config(tmp_path)
+    config.payload.setdefault("qwen", {})["stop_file"] = str(tmp_path / "qwen.stop")
+    profile = ResearchBackend(config).profile()
+    store = RunStore(tmp_path / "stage_runs", "sample", "config", unique_run=True)
+    candidate = CandidateEvent(
+        event_id="event-1", track_id="student-1", event_type="review",
+        trigger_frame_index=0, trigger_pts_seconds=0.0,
+    )
+    store.write_jsonl("artifacts/candidates.selected.jsonl", [candidate])
+    store.write_jsonl("artifacts/qwen_crop_queue.jsonl", [{"candidate_event_id": candidate.event_id, "status": "ready"}])
+    store.write_jsonl("artifacts/locate_results.jsonl", [])
+    store.write_jsonl("evidence/index.jsonl", [{"event_id": candidate.event_id}])
+    (tmp_path / "qwen.stop").write_text("stop", encoding="utf-8")
+    spec = stages_module.ResearchStageSpec(
+        config=config, store=store, source=tmp_path / "unused.avi", video={}, profile=profile,
+        mode="production_adaptive", max_frames=None, skip_qwen=False,
+        allow_incomplete_preflight=False, experiment_digest="experiment", input_sha256="input",
+        config_sha256="config", code_sha256="code", locate_model_sha256="locate", qwen_model_sha256="qwen",
+    )
+    adapter = SimpleNamespace(pid=4321, exitcode=0)
+    captured: dict = {}
+    release_calls: list = []
+
+    def fake_qwen_pass(*_args, **kwargs):
+        captured["stop_check"] = kwargs.get("stop_check")
+        return [], {"status": "ok", "interruption_reason": "stop_requested", "executed_requests": 0}
+
+    def fake_release(model):
+        release_calls.append(model)
+        return {"released": True, "close_error": None, "cuda_after_release": {}}
+
+    monkeypatch.setattr(stages_module, "_make_qwen_adapter", lambda *_args, **_kwargs: adapter)
+    monkeypatch.setattr(stages_module, "_qwen_pass", fake_qwen_pass)
+    monkeypatch.setattr(
+        stages_module, "_profile_vocabulary",
+        lambda _spec: (SimpleNamespace(sha256="registry"), [], "vocabulary"),
+    )
+    monkeypatch.setattr(
+        stages_module, "GpuLease",
+        lambda _path: SimpleNamespace(acquire=lambda: None, release=lambda: None),
+    )
+    monkeypatch.setattr(stages_module, "release_model", fake_release)
+    executor = stages_module.ResearchStageExecutor(spec)
+    progress: list = []
+    executor.set_progress_reporter(
+        lambda stage, done, total, message: progress.append((stage, done, total, message))
+    )
+
+    with pytest.raises(stages_module.StageExecutionError, match="stopped_by_user"):
+        executor._run_s5(input_fingerprint_sha256="fingerprint", partial_outputs_reusable=False)
+
+    assert release_calls == [adapter]
+    assert captured["stop_check"] is not None
+    assert captured["stop_check"]() is True
+    receipt = json.loads(
+        (store.run_dir / "diagnostics" / "qwen_worker_receipt.v1.json").read_text(encoding="utf-8")
+    )
+    assert receipt["released"] is True
+    assert receipt["worker_pid"] == 4321
+    assert not (store.run_dir / "stage_receipts" / "S5.json").exists()
+    messages = [message for _stage, _done, _total, message in progress]
+    assert any("正在释放 Qwen 模型" in message for message in messages)
+    assert any("Qwen 模型已释放" in message for message in messages)
+
+
 def test_classification_conflict_gets_one_independent_recheck(tmp_path: Path) -> None:
     from classroom_hybrid_ai.contracts import CandidateEvent, ReviewDecision
 

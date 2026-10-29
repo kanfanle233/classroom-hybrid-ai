@@ -134,10 +134,13 @@ def test_qwen_pass_builds_profile_once_and_preserves_request_metadata(tmp_path, 
         expected_vocabulary_sha256='digest', action_profile=profile,
         locate_rows=rows, resolve_conflicts=False)
     assert len(reviews) == 2 and len(captured) == 2
-    assert calls == [profile.profile_id]
-    assert captured[0][0]['action_profile'] is captured[1][0]['action_profile']
+    # The action contract lives in the prompt's frozen vocabulary; echoing it
+    # in evidence metadata duplicated ~500 tokens per request and pushed
+    # prefill memory past the 8 GiB device budget, so it is never serialized.
+    assert calls == []
+    assert 'action_profile' not in captured[0][0]
     for candidate, (metadata, serialized) in zip(candidates, captured):
-        legacy = dict(metadata, action_profile=expected,
+        legacy = dict(metadata,
             target_locate_evidence=_target_locate_evidence(candidate, rows))
         assert serialized.encode('utf-8') == json.dumps(legacy, ensure_ascii=False,
             separators=(',',':')).encode('utf-8')

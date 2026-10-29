@@ -191,3 +191,31 @@ def test_qwen_compact_response_rejects_duplicate_keys_after_whitespace_normaliza
             evidence_frame_indices=(3,),
             compact_response=True,
         )
+
+def test_qwen_memory_fraction_validates_and_applies_once() -> None:
+    from types import SimpleNamespace
+
+    with pytest.raises(ValueError, match="memory_fraction"):
+        Qwen35Adapter("stub-model", backend="http", memory_fraction=0.0)
+    with pytest.raises(ValueError, match="memory_fraction"):
+        Qwen35Adapter("stub-model", backend="http", memory_fraction=1.5)
+    with pytest.raises(ValueError, match="memory_fraction"):
+        Qwen35Adapter("stub-model", backend="http", memory_fraction=True)
+
+    adapter = Qwen35Adapter("stub-model", backend="http", memory_fraction=0.80)
+    calls: list[float] = []
+    torch = SimpleNamespace(
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            set_per_process_memory_fraction=lambda value: calls.append(value),
+        )
+    )
+    adapter._apply_memory_fraction(torch)
+    adapter._apply_memory_fraction(torch)
+    assert calls == [0.80]
+
+    unavailable = Qwen35Adapter("stub-model", backend="http", memory_fraction=0.80)
+    with pytest.raises(RuntimeError, match="qwen_memory_fraction_requires_cuda"):
+        unavailable._apply_memory_fraction(
+            SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+        )

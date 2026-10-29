@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
 
-from classroom_hybrid_ai.qwen_worker import QwenProcessClient, QwenWorkerError
+from classroom_hybrid_ai.qwen_worker import (
+    QwenProcessClient,
+    QwenWorkerError,
+    _apply_cuda_alloc_conf,
+)
 
 
 class _CloseProcess:
@@ -190,9 +196,13 @@ def test_qwen_worker_is_a_short_lived_process_and_surfaces_load_errors(tmp_path:
         },
         timeout=30,
     )
+    started = time.perf_counter()
     try:
-        with pytest.raises(QwenWorkerError, match="qwen_worker|OSError|config"):
+        with pytest.raises(QwenWorkerError, match="qwen_local_model_config_missing"):
             client.warmup()
+        # A directory without config.json must be rejected before transformers
+        # is imported; the previous behaviour took ~42 s to fail.
+        assert time.perf_counter() - started < 20.0
         assert client.pid is not None
         assert client.loaded is True
     finally:
@@ -224,3 +234,35 @@ def test_qwen_worker_forwards_text_completion_for_semantic_adjudication() -> Non
         client.close()
     assert client.exitcode == 0
     assert client.last_performance["timings_seconds"]["teardown"] >= 0
+
+
+def test_client_last_metrics_surface_worker_request_peaks() -> None:
+    client = QwenProcessClient({})
+    for key in (
+        "max_allocated_bytes",
+        "max_reserved_bytes",
+        "request_peak_allocated_bytes",
+        "request_peak_reserved_bytes",
+    ):
+        assert key in client.last_metrics
+        assert client.last_metrics[key] is None
+
+
+def test_worker_applies_configured_cuda_alloc_conf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    applied = _apply_cuda_alloc_conf("garbage_collection_threshold:0.80")
+    assert applied == "garbage_collection_threshold:0.80"
+    assert os.environ["PYTORCH_CUDA_ALLOC_CONF"] == "garbage_collection_threshold:0.80"
+
+
+def test_worker_keeps_operator_cuda_alloc_conf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128")
+    applied = _apply_cuda_alloc_conf("garbage_collection_threshold:0.80")
+    assert applied == "max_split_size_mb:128"
+    assert os.environ["PYTORCH_CUDA_ALLOC_CONF"] == "max_split_size_mb:128"
+
+
+def test_worker_ignores_blank_cuda_alloc_conf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    assert _apply_cuda_alloc_conf("   ") is None
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in os.environ

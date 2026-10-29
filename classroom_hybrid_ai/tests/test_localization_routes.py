@@ -361,3 +361,23 @@ def test_generic_annotation_shows_actual_source_and_unverified_person(tmp_path):
     assert "Locate" in rendered[0]["annotation_labels"][0]
     assert "YOLO" in rendered[0]["annotation_labels"][1] and "unverified person" in rendered[0]["annotation_labels"][1]
     assert Path(rendered[0]["annotated_path"]).is_file()
+
+
+def test_dense_annotation_suppresses_overlapping_label_plates_and_keeps_every_box(tmp_path):
+    path = tmp_path / "dense.jpg"
+    Image.new("RGB", (480, 320), "white").save(path)
+    detections = [
+        person(x=20 + index * 2, source="yolo", student_id=f"student-{index:02d}",
+               person_id=f"student-{index:02d}", student_confirmed=True) if index % 3 else
+        person(x=20 + index * 2, person_id=f"person-{index:02d}", student_confirmed=False)
+        for index in range(14)
+    ]
+    row = frame(0, detections)
+    row["path"] = str(path)
+    rendered, stats = render_localization_annotations([row], tmp_path / "annotations")
+    labels = rendered[0]["annotation_labels"]
+    assert stats["rendered_student_boxes"] + stats["rendered_unverified_person_boxes"] == len(detections)
+    assert len(labels) == len(detections)
+    assert all("YOLO" in label for label in labels)
+    assert stats["suppressed_label_count"] >= 1
+    assert Path(rendered[0]["annotated_path"]).is_file()

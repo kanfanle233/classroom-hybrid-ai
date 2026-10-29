@@ -49,6 +49,17 @@ def _safe_total(value: int | None) -> int | None:
     return max(0, int(value))
 
 
+def _json_safe_components(components: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return a flat, JSON-serializable copy of attempt fingerprint components."""
+
+    if components is None:
+        return None
+    normalized = {str(name): value for name, value in components.items()}
+    return json.loads(
+        json.dumps(normalized, ensure_ascii=False, sort_keys=True, default=str)
+    )
+
+
 def weighted_progress(stages: Mapping[str, StageState | Mapping[str, Any]]) -> float | None:
     """Return the fixed-weight progress in percent, or ``None`` if unknown."""
 
@@ -276,8 +287,20 @@ class StageLedger:
             force_write=True,
         )
 
-    def begin_attempt(self, stage_id: str, input_fingerprint_sha256: str) -> dict[str, Any]:
-        """Persist the fingerprint before work so matching partial outputs are reusable."""
+    def begin_attempt(
+        self,
+        stage_id: str,
+        input_fingerprint_sha256: str,
+        *,
+        components: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Persist the fingerprint before work so matching partial outputs are reusable.
+
+        ``components`` records which dependency hashes formed this fingerprint so
+        a later mismatch can be explained instead of only reported as a changed
+        overall digest. Partial outputs stay reusable *only* on an exact
+        fingerprint match; components never widen that rule.
+        """
 
         path = self.run_dir / "diagnostics" / "stage_attempts" / f"{stage_id}.json"
         previous: dict[str, Any] | None = None
@@ -287,15 +310,34 @@ class StageLedger:
                 previous = value if isinstance(value, dict) else None
             except Exception:
                 previous = None
+        current_components = _json_safe_components(components)
+        previous_components = (
+            previous.get("components") if isinstance(previous, dict) else None
+        )
+        if not isinstance(previous_components, dict):
+            previous_components = None
+        else:
+            previous_components = _json_safe_components(previous_components)
+        same_fingerprint = bool(
+            previous
+            and previous.get("input_fingerprint_sha256") == input_fingerprint_sha256
+        )
+        fingerprint_mismatch: list[str] = []
+        if not same_fingerprint:
+            fingerprint_mismatch.append("input_fingerprint_sha256")
+            if previous_components and current_components:
+                for name in sorted(set(previous_components) | set(current_components)):
+                    if previous_components.get(name) != current_components.get(name):
+                        fingerprint_mismatch.append(name)
         attempt = {
             "schema_version": "classroom_hybrid_ai.stage_attempt.v1",
             "stage_id": stage_id,
             "started_at": utc_now(),
             "input_fingerprint_sha256": input_fingerprint_sha256,
-            "partial_outputs_reusable": bool(
-                previous
-                and previous.get("input_fingerprint_sha256") == input_fingerprint_sha256
-            ),
+            "partial_outputs_reusable": same_fingerprint,
+            "components": current_components,
+            "previous_components": previous_components,
+            "fingerprint_mismatch": fingerprint_mismatch,
         }
         atomic_write_json(path, attempt)
         return attempt
