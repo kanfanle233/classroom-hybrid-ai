@@ -182,6 +182,91 @@ def test_s5_interruption_reuses_successful_request_and_runs_remaining_only(tmp_p
     assert all(control["calls"][stage_id] == 1 for stage_id in STAGE_IDS[:5])
 
 
+def test_s5_resume_records_reusable_attempt_components(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    video = _video(tmp_path / "sample.avi")
+    control: dict[str, Any] = {"fail_s5_once": True}
+    backend = _backend(config, control)
+    with pytest.raises(RuntimeError, match="synthetic_s5_interrupt"):
+        backend.run(video)
+    run_dir = Path(control["run_dirs"][0])
+    backend.resume(run_dir)
+    # Only the requests written before the interruption were completed, so the
+    # second attempt must add the two remaining responses and nothing else.
+    assert control["qwen_reused"]
+    assert control["qwen_reused"] == ["event-1"]
+    assert control["qwen_calls"] == 3
+    assert control["calls"]["S5"] == 2
+    attempt = json.loads(
+        (run_dir / "diagnostics" / "stage_attempts" / "S5.json").read_text(encoding="utf-8")
+    )
+    assert attempt["partial_outputs_reusable"] is True
+    assert attempt["fingerprint_mismatch"] == []
+    assert attempt["components"]["qwen_model_sha256"]
+    assert attempt["previous_components"] is not None
+    state = json.loads((run_dir / "run_state.v1.json").read_text(encoding="utf-8"))
+    assert state["stages"]["S5"]["metadata"]["fingerprint_mismatch"] == []
+
+
+def test_stage_attempt_diagnostics_record_component_mismatch(tmp_path: Path) -> None:
+    from classroom_hybrid_ai.stage_runtime import StageLedger
+    ledger = StageLedger(tmp_path, run_id="run", video_id="video")
+    ledger.begin_attempt(
+        "S5", "fingerprint-a",
+        components={"code_sha256": "code-1", "config_sha256": "config-1", "stage_id": "S5"},
+    )
+    ledger.begin_attempt(
+        "S5", "fingerprint-b",
+        components={"code_sha256": "code-1", "config_sha256": "config-2", "stage_id": "S5"},
+    )
+    path = tmp_path / "diagnostics" / "stage_attempts" / "S5.json"
+    attempt = json.loads(path.read_text(encoding="utf-8"))
+    assert attempt["partial_outputs_reusable"] is False
+    assert "input_fingerprint_sha256" in attempt["fingerprint_mismatch"]
+    assert "config_sha256" in attempt["fingerprint_mismatch"]
+    assert "code_sha256" not in attempt["fingerprint_mismatch"]
+    assert attempt["components"]["config_sha256"] == "config-2"
+    assert attempt["previous_components"]["config_sha256"] == "config-1"
+
+    repeated = ledger.begin_attempt(
+        "S5", "fingerprint-b",
+        components={"code_sha256": "code-1", "config_sha256": "config-2", "stage_id": "S5"},
+    )
+    attempt = json.loads(path.read_text(encoding="utf-8"))
+    assert repeated["partial_outputs_reusable"] is True
+    assert attempt["partial_outputs_reusable"] is True
+    assert attempt["fingerprint_mismatch"] == []
+    ledger.close()
+
+
+def test_legacy_attempt_file_without_components_remains_readable(tmp_path: Path) -> None:
+    from classroom_hybrid_ai.stage_runtime import StageLedger
+    run_dir = tmp_path / "legacy-run"
+    run_dir.mkdir()
+    attempt_dir = run_dir / "diagnostics" / "stage_attempts"
+    attempt_dir.mkdir(parents=True)
+    atomic_write_json(attempt_dir / "S5.json", {
+        "schema_version": "classroom_hybrid_ai.stage_attempt.v1",
+        "stage_id": "S5",
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "input_fingerprint_sha256": "legacy-fingerprint",
+        "partial_outputs_reusable": False,
+    })
+    ledger = StageLedger(run_dir, run_id="run", video_id="video")
+    same = ledger.begin_attempt(
+        "S5", "legacy-fingerprint", components={"config_sha256": "config-1"},
+    )
+    assert same["partial_outputs_reusable"] is True
+    assert same["previous_components"] is None
+    assert same["fingerprint_mismatch"] == []
+    changed = ledger.begin_attempt(
+        "S5", "new-fingerprint", components={"config_sha256": "config-1"},
+    )
+    assert changed["partial_outputs_reusable"] is False
+    assert changed["fingerprint_mismatch"] == ["input_fingerprint_sha256"]
+    ledger.close()
+
+
 def test_tampered_stage_artifact_invalidates_that_stage_and_downstream(tmp_path: Path) -> None:
     config = _config(tmp_path)
     video = _video(tmp_path / "sample.avi")

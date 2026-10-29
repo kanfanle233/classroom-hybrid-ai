@@ -105,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     smoke.add_argument("--gate", choices=("none", "development", "delivery"), default="none")
     smoke.add_argument("--output", type=Path, help="optional JSON receipt path")
+    smoke.add_argument(
+        "--production-prompt",
+        action="store_true",
+        help="use the exact S5 classification prompt; required for a realistic 8 GiB memory gate",
+    )
 
     evaluate = commands.add_parser("evaluate", help="compare two Qwen candidates on shared rows")
     evaluate.add_argument("baseline", type=Path)
@@ -223,6 +228,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             gate=args.gate,
             command=sys.argv,
             checkpoint_path=args.output,
+            production_prompt=bool(getattr(args, "production_prompt", False)),
         )
         if args.output is not None:
             atomic_write_json(args.output.resolve(), result)

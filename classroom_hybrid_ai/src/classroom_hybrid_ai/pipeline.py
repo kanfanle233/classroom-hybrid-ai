@@ -2214,10 +2214,13 @@ def _classification_prompt(
             for item in action_profile.actions
         ]
         fixed_rules = FIXED_EIGHT_VISUAL_RULES if action_profile.is_core8 else ""
+        # The full contract payload duplicated the frozen vocabulary below and
+        # inflated every request to ~2.4k tokens, which drove prefill memory
+        # past the 8 GiB device budget.  Keep the immutable identity and digest;
+        # the exact definitions stay in the frozen vocabulary list.
         profile_line = (
             f"Action profile={action_profile.profile_id}; profile SHA256={action_profile.sha256}. "
             "Use only this immutable profile.\n"
-            f"Profile contract={json.dumps(action_profile.prompt_payload(), ensure_ascii=False, separators=(',', ':'))}\n"
         )
     else:
         priority = {code: index for index, code in enumerate(PROMPT_PRIORITY_CODES)}
@@ -2308,6 +2311,10 @@ def _make_qwen_adapter(
         "release_cuda_cache": bool(config.get("qwen.release_cuda_cache", False)),
         "device_strategy": device_strategy,
         "profile_timings": bool(config.get("performance.profile_model_timings", False)),
+        "memory_fraction": (
+            float(config.get("qwen.gpu_memory_fraction"))
+            if config.get("qwen.gpu_memory_fraction") is not None else None
+        ),
     }
     # Production local Qwen is isolated for the whole video.  Test doubles and
     # explicitly supplied adapter factories stay in-process so unit tests can
@@ -2317,8 +2324,12 @@ def _make_qwen_adapter(
         and adapter_factory is Qwen35Adapter
         and bool(config.get("qwen.process_isolation", True))
     ):
+        # The allocator config is consumed inside the child process before CUDA
+        # initializes, so it is only meaningful for the isolated worker path.
+        worker_kwargs = dict(adapter_kwargs)
+        worker_kwargs["cuda_alloc_conf"] = str(config.get("qwen.cuda_alloc_conf", "") or "").strip()
         return QwenProcessClient(
-            adapter_kwargs,
+            worker_kwargs,
             timeout=float(config.get("qwen.request_timeout_seconds", 300.0)),
         )
     adapter_kwargs.pop("model")
@@ -2505,8 +2516,6 @@ def _resolve_classification_conflicts(
             "target_highlighted": bool(packet.get("target_highlighted", False)),
             "metadata_scope": "current_student_only",
         }
-        if action_profile is not None:
-            request_evidence["action_profile"] = action_profile.prompt_payload()
         recheck_prompt = (
             prompt
             + "\nIndependent conflict recheck: the same student's nearby reviews disagree. "
@@ -2637,12 +2646,16 @@ def _qwen_pass(
     review_output: str = "reviews.jsonl",
     adapter_factory: Callable[..., Any] = Qwen35Adapter,
     progress_callback: Callable[[int, int], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> tuple[list[ReviewDecision], dict[str, Any]]:
     total_candidates = len(candidates)
 
     def report_progress(processed: int) -> None:
         if progress_callback is not None:
             progress_callback(min(max(0, int(processed)), total_candidates), total_candidates)
+
+    def stop_requested_now() -> bool:
+        return bool(stop_check is not None and stop_check())
 
     by_event = {row["event_id"]: row for row in evidence}
     if not candidates:
@@ -2679,8 +2692,8 @@ def _qwen_pass(
     from .research_policy import localization_route
     localization_index = TargetLocalizationIndex(locate_rows)
     generic_localization = localization_route(config) != "locate_only"
-    profile_template = action_profile.prompt_payload() if (
-        action_profile is not None and str(config.get("qwen.prompt_version", "legacy_v1")) == "legacy_v1") else None
+    # The action contract already travels in the prompt's frozen vocabulary;
+    # echoing it inside evidence metadata duplicated it in every request.
     reviews: list[ReviewDecision] = []
     failures = 0
     budget_exhausted = 0
@@ -2688,6 +2701,8 @@ def _qwen_pass(
     compact_transport_responses = 0
     oom_circuit_open = False
     conflict_stats = {"conflict_groups": 0, "conflict_rechecks": 0, "conflict_unresolved": 0}
+    executed_requests = 0
+    stop_observed = False
     started = time.perf_counter()
     try:
         warmup = getattr(adapter, "warmup", None)
@@ -2718,6 +2733,12 @@ def _qwen_pass(
                     "oom_circuit_open": _is_oom_error(exc),
                 }
         for candidate_index, candidate in enumerate(candidates):
+            # Cooperative stop: the boundary is "before a new request", so a
+            # completed response is never discarded and no candidate is marked
+            # successful without an actual on-disk response.
+            if stop_requested_now():
+                stop_observed = True
+                break
             packet = by_event.get(candidate.event_id, {})
             existing_composite = packet.get("qwen_composite") if isinstance(packet, Mapping) else None
             composite = (
@@ -2763,10 +2784,11 @@ def _qwen_pass(
                     request_evidence.pop("target_locate_evidence")
                     request_evidence["target_localization_evidence"] = localization_index.query(candidate, generic=True)
                     request_evidence["localization_contract_version"] = "classroom_hybrid_ai.localization_evidence.v2"
-                if profile_template is not None:
-                    request_evidence["action_profile"] = profile_template
                 retry_attempts = 0
                 while True:
+                    if stop_requested_now():
+                        stop_observed = True
+                        break
                     try:
                         request_prompt = active_prompt
                         if retry_attempts:
@@ -2777,6 +2799,7 @@ def _qwen_pass(
                             )
                         if call_budget is not None and not call_budget.consume():
                             raise _QwenBudgetExhausted("qwen_call_budget_exhausted")
+                        executed_requests += 1
                         request_started = time.perf_counter()
                         try:
                             raw = adapter.review(
@@ -2859,6 +2882,8 @@ def _qwen_pass(
                             schema_retries += 1
                             continue
                         raise
+                if stop_observed:
+                    break
             except _QwenBudgetExhausted as exc:
                 budget_exhausted += 1
                 review = ReviewDecision(
@@ -2951,6 +2976,7 @@ def _qwen_pass(
             and
             response_contract == "classification"
             and not oom_circuit_open
+            and not stop_observed
             and reviews
             and expected_vocabulary_sha256 is not None
             and allowed_action_ids is not None
@@ -2972,9 +2998,12 @@ def _qwen_pass(
     finally:
         teardown = release_model(adapter) if release_adapter else {"released": False, "shared_adapter": True}
     store.write_jsonl(review_output, reviews)
+    interruption = {"interruption_reason": "stop_requested"} if stop_observed else {}
     return reviews, {
         "status": "warning" if failures else "ok",
         "reviews": len(reviews),
+        "executed_requests": executed_requests,
+        **interruption,
         "failures": failures,
         "budget_exhausted": budget_exhausted,
         "fresh_schema_retries": schema_retries,

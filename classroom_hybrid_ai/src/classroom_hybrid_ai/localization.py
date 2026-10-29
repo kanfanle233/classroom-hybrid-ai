@@ -441,6 +441,26 @@ def associate_localization_rows(
     return result_observations, enriched, boxes, stage
 
 
+def _label_rectangles(
+    x1: int, y1: int, x2: int, y2: int, text_width: int, text_height: int, baseline: int,
+    width: int, height: int,
+) -> list[tuple[int, int, int, int, int]]:
+    """Return up to two label-plate rects (above, then below) with their text baseline."""
+
+    needed = text_height + baseline + 2
+    candidates = [(max(needed, y1) - needed, max(needed, y1))]
+    below = y2 + 2
+    if below + needed < height:
+        candidates.append((below, below + needed))
+    rects = []
+    for top, bottom in candidates:
+        right = min(width - 1, x1 + text_width + 4)
+        if top < 0 or bottom >= height or right <= x1:
+            continue
+        rects.append((x1, top, right, bottom, bottom - baseline - 1))
+    return rects
+
+
 def render_localization_annotations(
     rows: Sequence[Mapping[str, Any]], output_dir: str | Path, *, jpeg_quality: int = 95,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -448,7 +468,12 @@ def render_localization_annotations(
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     result = []
-    rendered = failed = confirmed_boxes = unverified_boxes = 0
+    rendered = failed = confirmed_boxes = unverified_boxes = suppressed_labels = 0
+    # Dense scenes (dozens of people per frame) use compact identifiers and
+    # suppress label plates that would overlap an already drawn plate.  Boxes
+    # and colours are never dropped; ``annotation_labels`` stays complete for
+    # audit even when a plate is hidden.
+    dense_label_limit = 10
     for raw_row in rows:
         row = dict(raw_row)
         if row.get("status") != "ok":
@@ -461,7 +486,10 @@ def render_localization_annotations(
             continue
         height, width = image.shape[:2]
         labels = []
-        for index, detection in enumerate(row.get("detections", []), 1):
+        occupied: list[tuple[int, int, int, int]] = []
+        detections = row.get("detections") or ()
+        dense = len(detections) > dense_label_limit
+        for index, detection in enumerate(detections, 1):
             bbox = detection.get("bbox")
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
                 continue
@@ -482,12 +510,19 @@ def render_localization_annotations(
             labels.append(label)
             color = (128, 128, 128) if not confirmed else (0, 190, 255) if uncertain else (60, 220, 60)
             cv2.rectangle(image, (x1, y1), (x2, y2), color, 2 if confirmed else 1)
-            (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .45, 1)
-            label_y = max(text_height + baseline + 2, y1)
-            cv2.rectangle(image, (x1, label_y - text_height - baseline - 2),
-                          (min(width - 1, x1 + text_width + 4), label_y), color, -1)
-            cv2.putText(image, label, (x1 + 2, label_y - baseline - 1), cv2.FONT_HERSHEY_SIMPLEX,
-                        .45, (0, 0, 0), 1, cv2.LINE_AA)
+            short = f"{identifier}{'?' if uncertain and confirmed else ''}" + ("" if confirmed else " | U")
+            text = short if dense else label
+            (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, .45, 1)
+            for plate in _label_rectangles(x1, y1, x2, y2, text_width, text_height, baseline, width, height):
+                left, top, right, bottom, text_y = plate
+                if any(not (right <= other[0] or other[2] <= left or bottom <= other[1] or other[3] <= top) for other in occupied):
+                    continue
+                cv2.rectangle(image, (left, top), (right, bottom), color, -1)
+                cv2.putText(image, text, (x1 + 2, text_y), cv2.FONT_HERSHEY_SIMPLEX, .45, (0, 0, 0), 1, cv2.LINE_AA)
+                occupied.append((left, top, right, bottom))
+                break
+            else:
+                suppressed_labels += 1
             confirmed_boxes += int(confirmed)
             unverified_boxes += int(not confirmed)
         target = destination / f"frame_{int(row['frame_index']):09d}.jpg"
@@ -501,6 +536,7 @@ def render_localization_annotations(
     return result, {"schema_version": LOCALIZATION_SCHEMA, "status": "warning" if failed else "ok",
                     "rendered_screenshots": rendered, "failed_screenshots": failed,
                     "rendered_student_boxes": confirmed_boxes, "rendered_unverified_person_boxes": unverified_boxes,
+                    "suppressed_label_count": suppressed_labels,
                     "artifact_dir": str(destination), "label_format": "student/person ID | actual detector D<frame-local index> | confirmation"}
 
 

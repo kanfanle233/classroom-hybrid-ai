@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -107,6 +108,152 @@ def _make_video(path: Path, *, frames: int = 15, fps: float = 10.0) -> None:
     for index in range(frames):
         writer.write(np.full((64, 64, 3), index * 7 % 255, dtype=np.uint8))
     writer.release()
+
+
+def _make_mp4_video(path: Path, *, frames: int = 10, fps: float = 10.0) -> None:
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (64, 64))
+    assert writer.isOpened()
+    for index in range(frames):
+        writer.write(np.full((64, 64, 3), index * 7 % 255, dtype=np.uint8))
+    writer.release()
+
+
+def _make_mp4_with_audio(path: Path, *, frames: int = 10, fps: float = 10.0) -> None:
+    av = pytest.importorskip("av")
+    rate = 44100
+    seconds = frames / fps
+    with av.open(str(path), mode="w", format="mp4") as out:
+        video = out.add_stream("libx264", rate=int(fps))
+        video.width, video.height, video.pix_fmt = 64, 64, "yuv420p"
+        audio = out.add_stream("aac", rate=rate)
+        audio.layout = "mono"
+        resampler = av.AudioResampler(format="fltp", layout="mono", rate=rate)
+        for index in range(frames):
+            frame = av.VideoFrame.from_ndarray(
+                np.full((64, 64, 3), index * 7 % 255, dtype=np.uint8), format="bgr24",
+            ).reformat(format="yuv420p")
+            frame.pts = index
+            for packet in video.encode(frame):
+                out.mux(packet)
+        for packet in video.encode():
+            out.mux(packet)
+        for start in range(0, int(seconds * rate), 1024):
+            timeline = np.arange(start, min(start + 1024, int(seconds * rate)))
+            samples = (0.2 * np.sin(2 * np.pi * 440 * timeline / rate)).astype(np.float32)
+            frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="fltp", layout="mono")
+            frame.sample_rate, frame.pts = rate, start
+            for converted in resampler.resample(frame):
+                for packet in audio.encode(converted):
+                    out.mux(packet)
+        for converted in resampler.resample(None):
+            for packet in audio.encode(converted):
+                out.mux(packet)
+        for packet in audio.encode():
+            out.mux(packet)
+
+
+def test_audio_preserve_without_ffmpeg_reports_missing_source_track(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "silent.avi"
+    rendered = tmp_path / "final.mp4"
+    _make_video(source)
+    _make_mp4_video(rendered)
+    monkeypatch.setattr(outputs_v3, "_ffmpeg_executable", lambda _: None)
+    result = outputs_v3._preserve_audio(source, rendered)
+    assert result["status"] == "unavailable" and result["preserved"] is False
+    assert result["reason"] == "source_has_no_audio_stream"
+    assert "ffmpeg_not_found" not in json.dumps(result)
+
+
+def test_audio_preserve_pyav_fallback_muxes_aac_audio(tmp_path: Path, monkeypatch) -> None:
+    av = pytest.importorskip("av")
+    source = tmp_path / "with_audio.mp4"
+    rendered = tmp_path / "final.mp4"
+    _make_mp4_with_audio(source)
+    _make_mp4_video(rendered)
+    original_bytes = rendered.read_bytes()
+    monkeypatch.setattr(outputs_v3, "_ffmpeg_executable", lambda _: None)
+    result = outputs_v3._preserve_audio(source, rendered)
+    assert result["status"] == "preserved" and result["preserved"] is True
+    assert result["muxer"] == "pyav"
+    assert rendered.read_bytes() != original_bytes
+    with av.open(str(rendered)) as container:
+        assert container.streams.video and container.streams.audio
+        assert container.streams.audio[0].codec_context.name == "aac"
+        audio_seconds = float(container.streams.audio[0].duration * container.streams.audio[0].time_base)
+        assert 0.5 <= audio_seconds <= 1.1
+    capture = cv2.VideoCapture(str(rendered))
+    assert int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) == 10
+    capture.release()
+    assert not rendered.with_name("final.audio.mp4").exists()
+
+
+def test_audio_preserve_reports_pyav_unavailable(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "silent.avi"
+    rendered = tmp_path / "final.mp4"
+    _make_video(source)
+    _make_mp4_video(rendered)
+    monkeypatch.setattr(outputs_v3, "_ffmpeg_executable", lambda _: None)
+    monkeypatch.setitem(sys.modules, "av", None)
+    result = outputs_v3._preserve_audio(source, rendered)
+    assert result["status"] == "unavailable" and result["preserved"] is False
+    assert result["reason"].startswith("pyav_unavailable")
+    assert result["warning"]
+
+
+def test_report_html_is_self_contained_and_reports_coverage_audio_and_video(tmp_path: Path, monkeypatch) -> None:
+    video = tmp_path / "sample.avi"
+    _make_video(video, frames=3, fps=10.0)
+    run_dir = tmp_path / "run"
+    profile = load_profile(ROOT / "configs" / "action_profiles.yaml")
+    monkeypatch.setattr(outputs_v3.shutil, "which", lambda _: None)
+    build_v3_outputs(
+        run_dir,
+        source=video,
+        info=_info(video, frames=3, duration=0.3),
+        profile=profile,
+        config_digest="config",
+    )
+    report = (run_dir / "report.html").read_text(encoding="utf-8")
+    assert len(report) > 2000
+    assert "<style>" in report and "http://" not in report and "https://" not in report
+    for field in ("覆盖率 / Coverage", "视频与音频 / Videos and audio", "audio_status", "视频信息 / Video",
+                  "阶段耗时 / Stage wall time", "Qwen 调用", "显存 / VRAM peak"):
+        assert field in report
+    for uri in ("metrics.v1.json", "frontend/timeline_display.v1.json", "frontend/index.v1.json", "videos/"):
+        assert f'href="{uri}"' in report
+    assert "sample.avi" in report and "未记录" in report
+
+
+def test_report_html_records_stage_times_qwen_vram_and_escapes_text() -> None:
+    profile = load_profile(ROOT / "configs" / "action_profiles.yaml")
+    metrics = {
+        "evaluation_status": "not_evaluated",
+        "audit": {"interval_count": 4, "unknown_interval_count": 2, "unknown_interval_seconds": 3.5,
+                  "covered_interval_seconds": 6.5, "overlay_row_count": 40},
+        "system": {"stage_wall_time_seconds": {"S0": 1.25, "S6": 4.5}, "qwen_actual_calls": 17,
+                   "peak_reserved_gib": 5.75},
+    }
+    videos = {
+        "tracking_preview": {"frames": 3, "uri": "videos/tracking_preview.mp4", "audio_status": "unavailable",
+                             "audio": {"reason": "preview_noncontiguous_clips_audio_not_muxed"}},
+        "action_preview": {"frames": 3, "uri": "videos/action_preview.mp4", "audio_status": "unavailable"},
+        "annotated_final": {"frames": 3, "uri": "videos/annotated_final.mp4", "audio_status": "preserved",
+                            "audio": {"reason": "pyav_mux_ok"}},
+    }
+    report = outputs_v3._render_report_html(
+        info={"path": "/tmp/<img onerror=alert(1)>.mp4", "duration_seconds": 10.0,
+              "frame_count": 30, "width": 320, "height": 240},
+        profile=profile,
+        students=[{"student_id": "student-001"}],
+        intervals=[],
+        metrics=metrics,
+        video_results=videos,
+    )
+    assert "1.250 s" in report and "4.500 s" in report and "17" in report and "5.750" in report
+    assert "320 × 240" in report and "3.500 s" in report and "6.500 s" in report
+    assert "preserved" in report and "pyav_mux_ok" in report
+    assert "&lt;img onerror=alert(1)&gt;.mp4" in report and "<img onerror=alert(1)>" not in report
+    assert "未记录" in report
 
 
 def _write_observations(run_dir: Path, rows: list[dict[str, object]]) -> None:

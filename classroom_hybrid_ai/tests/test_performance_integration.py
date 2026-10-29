@@ -68,8 +68,13 @@ def test_compact_prompt_keeps_one_definition_and_visual_rules():
     profile = load_profile(config.action_profiles_path, "core8_v1")
     legacy = _classification_prompt([], profile.sha256, action_profile=profile)
     compact = _classification_prompt([], profile.sha256, action_profile=profile, prompt_version="compact_v1")
-    assert "Profile contract=" in legacy
+    # The duplicated profile contract was removed from every version: the
+    # immutable id/digest stays, the exact definitions live once in the frozen
+    # vocabulary, and no colour hints reach the model.
+    assert "Profile contract=" not in legacy
     assert "Profile contract=" not in compact
+    assert "Action profile=" in legacy
+    assert legacy.count("Frozen vocabulary=") == 1
     assert compact.count("Frozen vocabulary=") == 1
     for action in profile.actions:
         assert str(action["definition"]) in compact

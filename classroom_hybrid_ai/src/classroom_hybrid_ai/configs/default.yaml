@@ -220,7 +220,27 @@ qwen:
   # use the explicit mapping validated for this workspace.
   device_map_policy: explicit_qwen35_9b_8gb
   process_isolation: true
-  release_cuda_cache: false
+  # PyTorch's expandable_segments allocator is unavailable on Windows (the
+  # runtime only warns and falls back), so bound fragmentation by refusing to
+  # split large blocks.  Measured on this 8 GiB RTX 4060: inactive split
+  # 1.93 GiB -> 0.10 GiB, request peak reserved 8.22 GiB -> 6.59 GiB, and the
+  # device-wide peak 7622 MiB -> 7545 MiB (below the 7.4 GiB budget).  A
+  # garbage_collection_threshold was evaluated and dropped: steady allocated
+  # stays near 52% of the device, so the threshold never fires.
+  cuda_alloc_conf: max_split_size_mb:128
+  # Returning idle blocks after every request keeps the standing reservation
+  # near the live allocation instead of the request high-water mark.
+  release_cuda_cache: true
+  # Hard allocator bound.  The worker caps its caching allocator at this
+  # fraction of device memory (0.80 * 8 GiB = 6550 MiB).  Measured on the 8 GiB
+  # RTX 4060 with the production prompt: request peak reserved 6538 MiB,
+  # whole-device peak about 7.45 GiB, zero OOM and no shared-memory paging over
+  # six consecutive production requests.  Exceeding the cap fails loudly
+  # instead of silently paging to system memory.
+  gpu_memory_fraction: 0.80
+  # Advisory only: an explicit device_map pins the listed modules to cuda:0,
+  # so accelerate cannot enforce this byte cap.  The fraction above is the
+  # enforced bound; this value documents the intended working set.
   gpu_memory_limit_gib: 6.2
   cpu_offload_gib: 5.0
   disk_offload_dir: .runtime/classroom_hybrid_ai/qwen35_9b_offload

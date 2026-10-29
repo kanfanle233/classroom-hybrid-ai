@@ -28,15 +28,18 @@ def _response(behavior: str | None) -> dict[str, object]:
     }
 
 
-def test_prompt_contains_the_selected_profile_verbatim_and_extension_has_11_actions() -> None:
+def test_prompt_contains_the_selected_profile_identity_and_extension_has_11_actions() -> None:
     profiles = load_profiles(ROOT / "configs" / "action_profiles.yaml")
     extension = profiles["scb_student_11_candidate_v1"]
     prompt = _classification_prompt((), "vocabulary-digest", action_profile=extension)
 
     assert f"Action profile={extension.profile_id}" in prompt
     assert extension.sha256 in prompt
+    # The full contract JSON is deliberately not echoed: it duplicated the
+    # frozen vocabulary and pushed every request past the 8 GiB prefill budget.
     envelope = json.dumps(extension.prompt_payload(), ensure_ascii=False, separators=(",", ":"))
-    assert envelope in prompt
+    assert envelope not in prompt
+    assert "Profile contract=" not in prompt
     assert prompt.count('"action_id":"a_') >= 11
     assert all(str(action["name_zh"]) in prompt for action in extension.actions)
     assert all(str(action["name_en"]).isascii() for action in extension.actions)

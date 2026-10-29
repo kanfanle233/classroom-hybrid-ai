@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
@@ -1550,13 +1551,120 @@ def render_video(source: Path, output: Path, overlays: Mapping[int, Sequence[Map
     return {"path": str(output), "uri": f"videos/{output.name}", "frames": frame, "fps": fps, "sha256": sha256_file(output), "bytes": output.stat().st_size, "clip_ranges": [{"start_pts_seconds": 0.0, "end_pts_seconds": frame / fps, "start_frame": 0, "end_frame_exclusive": frame, "requested_segments": ["full_video"]}], "frame_ranges": [{"start_frame": 0, "end_frame_exclusive": frame}], "semantic": {"kind": "annotated_final", "labels": ["student_id", "action_name_en", "action_color", "interval_status"]}, "semantic_id": "annotated_final"}
 
 
+def _video_frame_timing(path: Path) -> tuple[int, float]:
+    """Return the decoded frame count and fps used to compare muxed outputs."""
+
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if not capture.isOpened():
+            return 0, 0.0
+        return int(capture.get(cv2.CAP_PROP_FRAME_COUNT)), float(capture.get(cv2.CAP_PROP_FPS))
+    finally:
+        capture.release()
+
+
+def _mux_audio_pyav(source: Path, rendered: Path, temporary: Path) -> dict[str, Any]:
+    """Mux audio without FFmpeg: remux the video packets and encode AAC audio.
+
+    Only called when FFmpeg is absent.  The rendered video stream is copied
+    packet-for-packet (no second encode); source audio is decoded, encoded to
+    AAC, truncated to the rendered duration, and written next to the video.
+    """
+
+    try:
+        import av
+    except ImportError as exc:
+        reason = f"pyav_unavailable:{type(exc).__name__}"
+        return {"status": "unavailable", "preserved": False, "muxer": "pyav", "reason": reason, "warning": f"audio_not_preserved:{reason}"}
+    temporary.unlink(missing_ok=True)
+    source_container = rendered_container = output_container = None
+    try:
+        source_container = av.open(str(source))
+        if not source_container.streams.audio:
+            # No track to mux is a fact about the source, not a tool failure.
+            return {"status": "unavailable", "preserved": False, "muxer": "pyav", "reason": "source_has_no_audio_stream", "warning": "audio_not_preserved:source_has_no_audio_stream"}
+        rendered_frames, rendered_fps = _video_frame_timing(rendered)
+        duration_limit = rendered_frames / rendered_fps if rendered_frames > 0 and rendered_fps > 0 else None
+        rendered_container = av.open(str(rendered))
+        output_container = av.open(str(temporary), mode="w", format="mp4")
+        video_in = rendered_container.streams.video[0]
+        video_out = output_container.add_stream_from_template(video_in)
+        audio_in = source_container.streams.audio[0]
+        rate = int(audio_in.rate or 48000)
+        layout = "mono" if str(getattr(audio_in.layout, "name", "")) in {"mono"} else "stereo"
+        audio_out = output_container.add_stream("aac", rate=rate)
+        audio_out.layout = layout
+        resampler = av.AudioResampler(format=audio_out.codec_context.format.name, layout=layout, rate=rate)
+        for packet in rendered_container.demux(video_in):
+            if packet.dts is None:
+                continue
+            packet.stream = video_out
+            output_container.mux(packet)
+        # Windows refuses os.replace while the input handles are open.
+        rendered_container.close()
+        rendered_container = None
+        for frame in source_container.decode(audio_in):
+            if duration_limit is not None and frame.pts is not None and frame.time_base is not None and float(frame.pts * frame.time_base) >= duration_limit:
+                break
+            # Rebase the source audio at zero so it starts with the rendered video.
+            frame.pts = None
+            for converted in resampler.resample(frame):
+                _mux_encoded_audio(output_container, audio_out, converted, duration_limit)
+        for converted in resampler.resample(None):
+            _mux_encoded_audio(output_container, audio_out, converted, duration_limit)
+        for packet in audio_out.encode():
+            if duration_limit is None or packet.pts is None or float(packet.pts * audio_out.time_base) < duration_limit:
+                output_container.mux(packet)
+        source_container.close()
+        source_container = None
+        output_container.close()
+        output_container = None
+        with av.open(str(temporary)) as probe:
+            has_video = bool(probe.streams.video)
+            has_audio = bool(probe.streams.audio)
+        if not (has_video and has_audio):
+            raise OSError("pyav_mux_required_stream_missing")
+        muxed_frames, muxed_fps = _video_frame_timing(temporary)
+        if muxed_frames != rendered_frames or abs(muxed_fps - rendered_fps) > 1e-3:
+            raise OSError("pyav_mux_changed_video_timing")
+        os.replace(temporary, rendered)
+        return {
+            "status": "preserved", "preserved": True, "muxer": "pyav", "reason": "pyav_mux_ok",
+            "audio_codec": "aac",
+            "validation": {
+                "video_stream": "copied_from_rendered_without_reencode",
+                "audio_stream": "decoded_from_source_and_encoded_as_aac",
+                "required_streams_present": "passed",
+                "video_frame_count_and_fps": "passed",
+                "audio_truncated_to_video_seconds": duration_limit,
+            },
+        }
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        reason = f"{type(exc).__name__}:{exc}"
+        return {"status": "failed", "preserved": False, "muxer": "pyav", "reason": reason[:500], "warning": f"audio_not_preserved:{reason[:500]}"}
+    finally:
+        for container in (output_container, rendered_container, source_container):
+            if container is not None:
+                container.close()
+
+
+def _mux_encoded_audio(output_container: Any, audio_out: Any, frame: Any, duration_limit: float | None) -> None:
+    for packet in audio_out.encode(frame):
+        if duration_limit is not None and packet.pts is not None and float(packet.pts * audio_out.time_base) >= duration_limit:
+            continue
+        output_container.mux(packet)
+
+
 def _preserve_audio(source: Path, rendered: Path, *, ffmpeg_path: str | Path | None = None, validate_streams: bool = False) -> dict[str, Any]:
     """Best-effort audio mux with an explicit reason for every non-success."""
 
     ffmpeg = _ffmpeg_executable(ffmpeg_path)
-    if ffmpeg is None:
-        return {"status": "unavailable", "preserved": False, "reason": "ffmpeg_not_found", "warning": "audio_not_preserved:ffmpeg_not_found"}
     temporary = rendered.with_name(rendered.stem + ".audio.mp4")
+    if ffmpeg is None:
+        # PyAV (libav bindings) covers the common environment where the FFmpeg
+        # CLI is not on PATH; it always validates streams and frame timing.
+        return _mux_audio_pyav(source, rendered, temporary)
     command = [ffmpeg, "-y", "-loglevel", "error", "-i", str(rendered), "-i", str(source), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-shortest", str(temporary)]
     try:
         completed = subprocess.run(command, check=False, capture_output=True, timeout=180)
@@ -1723,6 +1831,182 @@ def _write_english_display_json(
     return action_uri, interval_uri, timeline_uri
 
 
+_REPORT_STYLE = """
+:root { color-scheme: light dark; }
+body { margin: 0; padding: 24px 32px 48px; font: 15px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: #1d2433; background: #f6f7fb; }
+header { border-bottom: 3px solid #2f6fed; padding-bottom: 12px; margin-bottom: 20px; }
+h1 { margin: 0 0 4px; font-size: 24px; }
+h2 { font-size: 17px; margin: 26px 0 8px; padding-left: 8px; border-left: 4px solid #2f6fed; }
+.meta { color: #566; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 2px rgba(20, 30, 60, .08); }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #e6e9f0; vertical-align: top; }
+th { background: #eef2fb; font-weight: 600; }
+td.key { width: 34%; color: #333c4f; }
+td.value { font-variant-numeric: tabular-nums; word-break: break-word; }
+.not-recorded { color: #8a8f9c; font-style: italic; }
+ul.links { margin: 0; padding-left: 20px; }
+ul.links a { color: #1f5fd0; }
+footer { margin-top: 30px; color: #7a808d; font-size: 12px; }
+"""
+
+
+def _report_text(value: Any) -> str:
+    """Escape any recorded value; missing data is stated, never invented."""
+
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return '<span class="not-recorded">未记录</span>'
+    return _html_escape(str(value))
+
+
+def _report_number(value: Any, unit: str = "") -> str:
+    try:
+        return _html_escape(f"{float(value):.3f}{unit}")
+    except (TypeError, ValueError):
+        return '<span class="not-recorded">未记录</span>'
+
+
+def _report_count(value: Any) -> str:
+    try:
+        return _html_escape(str(int(value)))
+    except (TypeError, ValueError):
+        return '<span class="not-recorded">未记录</span>'
+
+
+def _report_lookup(payload: Any, key: str) -> Any:
+    """Find the first recorded scalar for ``key`` anywhere in the metrics tree."""
+
+    if isinstance(payload, Mapping):
+        for name, value in payload.items():
+            if str(name).lower() == key.lower() and value not in (None, ""):
+                return value
+            found = _report_lookup(value, key)
+            if found not in (None, ""):
+                return found
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            found = _report_lookup(item, key)
+            if found not in (None, ""):
+                return found
+    return None
+
+
+def _report_row(label: str, value: str) -> str:
+    return f'<tr><td class="key">{_html_escape(label)}</td><td class="value">{value}</td></tr>'
+
+
+def _render_report_html(
+    *,
+    info: Mapping[str, Any],
+    profile: ActionProfile,
+    students: Sequence[Mapping[str, Any]],
+    intervals: Sequence[Mapping[str, Any]],
+    metrics: Mapping[str, Any],
+    video_results: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """Render a self-contained, escaped run report from committed artifacts."""
+
+    audit = metrics.get("audit", {}) if isinstance(metrics.get("audit"), Mapping) else {}
+    system = metrics.get("system", {}) if isinstance(metrics.get("system"), Mapping) else {}
+    video = dict(info or {})
+    annotated = video_results.get("annotated_final", {}) or {}
+    source_name = Path(str(video["path"]).strip()).name if str(video.get("path") or "").strip() else None
+    duration = video.get("duration_seconds")
+    frame_count = video.get("frame_count")
+    if frame_count in (None, ""):
+        frame_count = annotated.get("frames")
+    width, height = video.get("width"), video.get("height")
+    resolution = f"{int(width)} × {int(height)}" if isinstance(width, (int, float)) and isinstance(height, (int, float)) else None
+    interval_count = audit.get("interval_count", len(intervals))
+    unknown_count = audit.get("unknown_interval_count")
+    unknown_seconds = audit.get("unknown_interval_seconds")
+    covered_seconds = audit.get("covered_interval_seconds")
+    if unknown_count in (None, "") or unknown_seconds in (None, "") or covered_seconds in (None, ""):
+        unknown_rows = [row for row in intervals if str(row.get("action_id")) == UNKNOWN_ID or str(row.get("status")) == "unobserved"]
+        unknown_count = len(unknown_rows)
+        unknown_seconds = sum(max(0.0, float(row.get("end_pts_seconds", 0.0)) - float(row.get("start_pts_seconds", 0.0))) for row in unknown_rows)
+        covered_seconds = max(0.0, sum(max(0.0, float(row.get("end_pts_seconds", 0.0)) - float(row.get("start_pts_seconds", 0.0))) for row in intervals) - unknown_seconds)
+    stage_times = system.get("stage_wall_time_seconds", {})
+    stage_times = stage_times if isinstance(stage_times, Mapping) else {}
+    stage_rows = "".join(
+        _report_row(stage, _report_number(stage_times.get(stage), " s"))
+        for stage in (f"S{index}" for index in range(8))
+    )
+    qwen_calls = system.get("qwen_actual_calls")
+    candidate_count = _report_lookup(metrics, "all_candidates")
+    selected_count = _report_lookup(metrics, "selected_candidates")
+    if selected_count in (None, ""):
+        selected_count = _report_lookup(metrics, "fair_selected_candidates")
+    vram_rows = "".join((
+        _report_row("PyTorch peak reserved (GiB)", _report_number(system.get("peak_reserved_gib"))),
+        _report_row("PyTorch peak allocated (GiB)", _report_number(system.get("peak_allocated_gib"))),
+        _report_row("Device-wide sampled peak (GiB)", _report_number(system.get("sampled_peak_physical_vram_gib"))),
+        _report_row("Recorded generic VRAM peak", _report_number(system.get("peak_vram"))),
+    ))
+    video_rows = []
+    for key in ("tracking_preview", "action_preview", "annotated_final"):
+        receipt = video_results.get(key, {}) or {}
+        audio = receipt.get("audio", {}) if isinstance(receipt.get("audio"), Mapping) else {}
+        uri = receipt.get("uri") or f"videos/{key}.mp4"
+        detail = audio.get("reason") or audio.get("warning")
+        video_rows.append(
+            "<tr>"
+            f'<td class="key"><a href="{_html_escape(str(uri))}">{_html_escape(key)}</a></td>'
+            f'<td class="value">{_report_count(receipt.get("frames"))} 帧</td>'
+            f'<td class="value">{_report_text(receipt.get("audio_status"))}</td>'
+            f'<td class="value">{_report_text(detail)}</td>'
+            "</tr>"
+        )
+    evaluation_status = metrics.get("evaluation_status")
+    report = "\n".join((
+        "<!doctype html>",
+        '<html lang="en"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        "<title>Classroom Hybrid AI v3 report</title>",
+        f"<style>{_REPORT_STYLE}</style></head><body>",
+        "<header><h1>Classroom Student Action Report</h1>",
+        f'<p class="meta">schema: classroom_hybrid_ai.report.v1 · profile: {_report_text(profile.profile_id)} · '
+        f'students: {_report_count(len(students))} · evaluation: {_report_text(evaluation_status)}</p></header>',
+        '<section id="video"><h2>视频信息 / Video</h2><table><tr><th>字段</th><th>值</th></tr>',
+        _report_row("Source file", _report_text(source_name)),
+        _report_row("Duration", _report_number(duration, " s")),
+        _report_row("Frames", _report_count(frame_count)),
+        _report_row("Resolution", _report_text(resolution)),
+        "</table></section>",
+        '<section id="coverage"><h2>覆盖率 / Coverage</h2><table><tr><th>字段</th><th>值</th></tr>',
+        _report_row("Intervals total", _report_count(interval_count)),
+        _report_row("Unknown / gray-zone intervals", _report_count(unknown_count)),
+        _report_row("Unknown / gray-zone seconds", _report_number(unknown_seconds, " s")),
+        _report_row("Covered seconds", _report_number(covered_seconds, " s")),
+        _report_row("Overlay rows", _report_count(audit.get("overlay_row_count"))),
+        "</table></section>",
+        '<section id="stage-wall-time"><h2>阶段耗时 / Stage wall time</h2><table><tr><th>Stage</th><th>Wall time</th></tr>',
+        stage_rows,
+        _report_row("Total", _report_number(system.get("total_wall_time_seconds"), " s")),
+        "</table></section>",
+        '<section id="qwen"><h2>Qwen 调用 / Qwen calls</h2><table><tr><th>字段</th><th>值</th></tr>',
+        _report_row("Qwen actual calls", _report_count(qwen_calls)),
+        _report_row("Candidates", _report_count(candidate_count)),
+        _report_row("Selected candidates", _report_count(selected_count)),
+        "</table></section>",
+        '<section id="vram"><h2>显存 / VRAM peak</h2><table><tr><th>字段</th><th>值</th></tr>',
+        vram_rows,
+        "</table></section>",
+        '<section id="videos"><h2>视频与音频 / Videos and audio</h2><table>'
+        "<tr><th>Video</th><th>Frames</th><th>audio_status</th><th>Audio detail</th></tr>",
+        *video_rows,
+        "</table></section>",
+        '<section id="artifacts"><h2>产物链接 / Artifacts</h2><ul class="links">',
+        '<li><a href="metrics.v1.json">metrics.v1.json</a></li>',
+        '<li><a href="frontend/timeline_display.v1.json">frontend/timeline_display.v1.json</a></li>',
+        '<li><a href="frontend/index.v1.json">frontend/index.v1.json</a></li>',
+        '<li><a href="videos/">videos/</a></li>',
+        "</ul></section>",
+        "<footer>Generated by classroom_hybrid_ai S7. Missing values are marked 未记录; nothing is interpolated.</footer>",
+        "</body></html>",
+    ))
+    return report
+
+
 def build_v3_outputs(run_dir: str | Path, *, source: str | Path, info: Mapping[str, Any], profile: ActionProfile, config_digest: str, manifest_extra: Mapping[str, Any] | None = None, reuse_stage_artifacts: bool = False, progress_callback: Callable[[int, int], None] | None = None, encoder_backend: str = "opencv", ffmpeg_path: str | Path | None = None) -> dict[str, Any]:
     root = Path(run_dir).resolve(); source_path = Path(source).resolve(); duration = float(info.get("duration_seconds", 0.0) or 0.0)
     preview_uris: list[str] = []
@@ -1788,12 +2072,14 @@ def build_v3_outputs(run_dir: str | Path, *, source: str | Path, info: Mapping[s
             # The preview consists of disjoint/overlapping temporal clips.
             # Muxing the complete source track would shift audio relative to
             # the concatenated visual clips, so leave it out explicitly until
-            # an atrim+concat audio pipeline is available.
+            # an atrim+concat audio pipeline is available.  This is a declared
+            # contract of the preview artifacts, not a delivery failure: the
+            # final annotated video carries the preserved audio track.
             audio = {
                 "status": "unavailable",
                 "preserved": False,
+                "by_design": True,
                 "reason": "preview_noncontiguous_clips_audio_not_muxed",
-                "warning": "audio_not_preserved:preview_noncontiguous_clips_audio_not_muxed",
             }
         # Keep the historical boolean while exposing a structured state and
         # an explicit warning/reason for unavailable or failed muxing.
@@ -1814,7 +2100,14 @@ def build_v3_outputs(run_dir: str | Path, *, source: str | Path, info: Mapping[s
         system_metrics=collect_system_metrics(root, video_info=info, stage_ids=tuple(f"S{index}" for index in range(7))),
     )
     atomic_write_json(root / "metrics.v1.json", metrics)
-    report = "<!doctype html><meta charset='utf-8'><title>Classroom Hybrid AI v3 report</title><h1>Classroom Student Action Report</h1><p>profile: %s</p><p>students: %d; timeline intervals: %d; unknown intervals: %d.</p><p>Evaluation status: not_evaluated (gold_annotations_not_provided). See metrics.v1.json, timeline_display.v1.json, and frontend/index.v1.json for display-ready results.</p>" % (profile.profile_id, len(students), len(intervals), len([row for row in intervals if row.get("action_id") == UNKNOWN_ID]))
+    report = _render_report_html(
+        info=info,
+        profile=profile,
+        students=students,
+        intervals=intervals,
+        metrics=metrics,
+        video_results=video_results,
+    )
     (root / "report.html").write_text(report, encoding="utf-8")
     # Render S0-S7 semantic payloads after S7 files exist, so the S7 preview
     # can reference the final video, timeline, and report.

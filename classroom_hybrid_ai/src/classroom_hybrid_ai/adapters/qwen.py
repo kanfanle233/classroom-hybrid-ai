@@ -351,6 +351,7 @@ class Qwen35Adapter:
         enable_thinking: bool = False,
         device_strategy: str = "legacy_offload",
         profile_timings: bool = False,
+        memory_fraction: float | None = None,
     ) -> None:
         backend = backend.strip().lower()
         if backend not in {"http", "local"}:
@@ -396,6 +397,16 @@ class Qwen35Adapter:
             raise ValueError("cpu_embedding_gpu_head requires the local backend")
         self.device_strategy = device_strategy
         self.profile_timings = bool(profile_timings)
+        if memory_fraction is not None:
+            if (
+                isinstance(memory_fraction, bool)
+                or not isinstance(memory_fraction, (int, float))
+                or not 0.0 < float(memory_fraction) <= 1.0
+            ):
+                raise ValueError("memory_fraction must be a number in (0, 1]")
+            memory_fraction = float(memory_fraction)
+        self.memory_fraction = memory_fraction
+        self._memory_fraction_applied = False
         self.last_performance = _performance_record(backend)
         self._embedding_counters: dict[str, int] = {}
         self._kernel_compatibility: dict[str, Any] = {}
@@ -422,12 +433,21 @@ class Qwen35Adapter:
         assert self.model_path is not None
         load_started = time.perf_counter()
         try:
+            torch = importlib.import_module("torch")
+            self._apply_memory_fraction(torch)
             if self.local_loader is not None:
                 self._local_model, self._processor = self.local_loader(self.model_path)
                 self._configure_device_strategy(self._local_model)
                 return self._local_model, self._processor
 
-            torch = importlib.import_module("torch")
+            # Fail before importing sentencepiece/transformers: a directory
+            # without a model config would otherwise be probed by the tokenizer
+            # and processor loaders, which takes tens of seconds to reject.
+            if not (self.model_path / "config.json").is_file():
+                raise FileNotFoundError(
+                    f"qwen_local_model_config_missing:{self.model_path}"
+                )
+
             transformers = importlib.import_module("transformers")
             compute_dtype = torch.float16
             try:
@@ -515,6 +535,28 @@ class Qwen35Adapter:
             raise
         finally:
             self.last_performance["timings_seconds"]["model_load"] = time.perf_counter() - load_started
+
+    def _apply_memory_fraction(self, torch: Any) -> None:
+        """Cap this process's caching allocator before any model allocation.
+
+        Windows WDDM silently pages allocations above dedicated VRAM into
+        shared system memory, which turns an 8 GiB card into an unpredictably
+        slow device.  A hard cap makes the allocator reuse its cache or fail
+        loudly instead of spilling.
+        """
+
+        if self.memory_fraction is None or self._memory_fraction_applied:
+            return
+        setter = getattr(torch.cuda, "set_per_process_memory_fraction", None)
+        if setter is None or not torch.cuda.is_available():
+            raise RuntimeError("qwen_memory_fraction_requires_cuda")
+        try:
+            setter(float(self.memory_fraction))
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            raise RuntimeError(
+                f"qwen_memory_fraction_unavailable:{type(exc).__name__}:{exc}"
+            ) from exc
+        self._memory_fraction_applied = True
 
     def _configure_device_strategy(self, model: Any) -> None:
         if self.device_strategy == "cpu_embedding_gpu_head":

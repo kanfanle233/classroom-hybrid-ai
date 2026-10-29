@@ -6,10 +6,11 @@ import platform
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from .adapters import Qwen35Adapter, qwen35_9b_8gb_device_map
 from .config import ProjectConfig
@@ -19,11 +20,20 @@ from .runtime import GpuLease, release_model
 from .storage import atomic_write_json
 
 
+DEFAULT_PHYSICAL_GPU_BUDGET_GIB = 7.4
+PHYSICAL_GPU_TOTAL_HEADROOM_MIB = 512.0
+REQUEST_PEAK_SAMPLE_INTERVAL_SECONDS = 0.3
+REQUEST_PEAK_SAMPLE_MIN_INTERVAL_SECONDS = 0.2
+REQUEST_PEAK_SAMPLE_MAX_INTERVAL_SECONDS = 0.5
+
+
 def _physical_gpu_used_mib(gpu_index: int) -> float | None:
     """Read whole-device use.
 
-    On Windows WDDM this includes desktop/driver/other-process allocations and
-    is therefore retained as a warning metric rather than a leak gate.
+    On Windows WDDM this includes desktop/driver/other-process allocations, so
+    a single point reading is noisy.  The smoke gate therefore samples it in a
+    background thread for the whole request and compares the observed peak with
+    the configured physical budget.
     """
 
     try:
@@ -40,13 +50,13 @@ def _physical_gpu_used_mib(gpu_index: int) -> float | None:
 
 
 def _physical_gpu_measurement_scope() -> str:
-    """Describe whether whole-device NVML readings are delivery-gate safe.
+    """Label the provenance of whole-device NVML readings.
 
     Windows WDDM owns and pages device memory across desktop, driver and all
-    applications.  Its whole-device value is useful diagnostics, but it is not
-    attributable to the isolated Qwen worker.  On non-Windows hosts the same
-    NVML device reading is treated as a reliable headroom measurement unless a
-    future backend records a more specific scope.
+    applications, so the value includes allocations that do not belong to the
+    isolated Qwen worker.  The label is kept for receipt provenance; the smoke
+    gate now applies the configured physical budget to the sampled whole-device
+    peak on every platform and reports the measurement scope alongside it.
     """
 
     return (
@@ -106,6 +116,152 @@ def _physical_gpu_process_used_mib(gpu_index: int, pid: int | None) -> float | N
         return total if found else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
+
+
+def _physical_gpu_budget_gib(config: ProjectConfig) -> float:
+    """Whole-device budget the user accepts (``runtime.gpu_budget_gib``)."""
+
+    raw = config.get("runtime.gpu_budget_gib", DEFAULT_PHYSICAL_GPU_BUDGET_GIB)
+    try:
+        budget = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_PHYSICAL_GPU_BUDGET_GIB
+    return budget if budget > 0 else DEFAULT_PHYSICAL_GPU_BUDGET_GIB
+
+
+def _physical_gpu_limit_mib(total_mib: float | None, budget_gib: float) -> float:
+    """Physical acceptance limit: the tighter of the budget and device headroom."""
+
+    budget_mib = float(budget_gib) * 1024.0
+    if total_mib is None:
+        return budget_mib
+    return min(float(total_mib) - PHYSICAL_GPU_TOTAL_HEADROOM_MIB, budget_mib)
+
+
+class _PhysicalRequestPeakSampler:
+    """Poll whole-device use in the background while one request runs.
+
+    The sampler reuses :func:`_physical_gpu_used_mib`, swallows every probe
+    error, and runs as a daemon thread so it can never fail or extend the
+    request it observes.  ``stop`` returns the observed peak (MiB) or ``None``
+    together with a human-readable ``missing_reason``.
+    """
+
+    def __init__(
+        self,
+        gpu_index: int,
+        *,
+        interval_seconds: float = REQUEST_PEAK_SAMPLE_INTERVAL_SECONDS,
+    ) -> None:
+        self.gpu_index = int(gpu_index)
+        self.interval_seconds = min(
+            REQUEST_PEAK_SAMPLE_MAX_INTERVAL_SECONDS,
+            max(REQUEST_PEAK_SAMPLE_MIN_INTERVAL_SECONDS, float(interval_seconds)),
+        )
+        self.peak_mib: float | None = None
+        self.samples = 0
+        self.failures = 0
+        self.missing_reason: str | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def start(self) -> "_PhysicalRequestPeakSampler":
+        if self._thread is not None:
+            return self
+        thread = threading.Thread(
+            target=self._run,
+            name="classroom-qwen-physical-peak",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except Exception as exc:  # sampling must never break the request
+            self._thread = None
+            self.missing_reason = f"sampler_thread_start_failed:{type(exc).__name__}"
+            return self
+        self._thread = thread
+        return self
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            self._sample_once()
+            if self._stop_event.wait(self.interval_seconds):
+                return
+
+    def _sample_once(self) -> None:
+        try:
+            value = _physical_gpu_used_mib(self.gpu_index)
+        except Exception as exc:
+            with self._lock:
+                self.failures += 1
+                self.missing_reason = f"physical_sample_failed:{type(exc).__name__}"
+            return
+        if value is None:
+            with self._lock:
+                self.failures += 1
+                self.missing_reason = "nvidia_smi_memory_used_unavailable"
+            return
+        with self._lock:
+            self.samples += 1
+            self.missing_reason = None
+            if self.peak_mib is None or float(value) > self.peak_mib:
+                self.peak_mib = float(value)
+
+    def stop(self) -> float | None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None:
+            try:
+                thread.join(timeout=2.0)
+            except Exception:
+                pass
+        with self._lock:
+            if self.peak_mib is None and self.samples == 0 and self.missing_reason is None:
+                self.missing_reason = "no_physical_samples_collected"
+            return self.peak_mib
+
+
+def _request_peak_mib_fields(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose the worker allocator request peaks in bytes and MiB."""
+
+    fields: dict[str, Any] = {}
+    for key, mib_key in (
+        ("request_peak_allocated_bytes", "request_peak_allocated_mib"),
+        ("request_peak_reserved_bytes", "request_peak_reserved_mib"),
+    ):
+        value = metrics.get(key)
+        fields[key] = value
+        fields[mib_key] = None if value is None else round(float(value) / 2**20, 3)
+    return fields
+
+
+def _physical_peak_gate(
+    *,
+    gate: str,
+    physical_peak_mib: float | None,
+    request_peak_mib: float | None,
+    limit_mib: float,
+) -> tuple[list[str], list[str]]:
+    """Apply the whole-device budget as a hard gate for graded smoke runs.
+
+    ``development``/``delivery`` treat a missing physical measurement exactly
+    like an exceeded one: unaudited headroom cannot pass.  ``none`` is the
+    exploratory mode and reports the same findings as warnings only.
+    """
+
+    issues: list[str] = []
+    if physical_peak_mib is None:
+        issues.append("physical_gpu_peak_measurement_missing")
+    elif float(physical_peak_mib) > float(limit_mib):
+        issues.append("physical_gpu_peak_exceeds_physical_budget_mib")
+    if request_peak_mib is None:
+        issues.append("physical_gpu_request_peak_measurement_missing")
+    elif float(request_peak_mib) > float(limit_mib):
+        issues.append("physical_gpu_request_peak_exceeds_physical_budget_mib")
+    if gate in {"development", "delivery"}:
+        return issues, []
+    return [], issues
 
 
 def _smoke_image(config: ProjectConfig, media: str | Path) -> tuple[Path, str]:
@@ -168,6 +324,26 @@ def _smoke_response_contract(response: Any) -> tuple[bool, str | None]:
         return False, "non_confirmed_behavior_must_be_null"
     if response.get("observability") not in {"clear", "partial", "none"}:
         return False, "observability_invalid"
+    return True, None
+
+
+def _production_response_contract(response: Any) -> tuple[bool, str | None]:
+    """Validate the real S5 prompt without assuming one fixed candidate.
+
+    The production prompt asks for a frozen-vocabulary decision; the pipeline's
+    own validator normalizes the behavior field, so the smoke gate only has to
+    prove that the model returned one strict JSON decision object.
+    """
+
+    if not isinstance(response, dict):
+        return False, "response_not_mapping"
+    if response.get("decision") not in {"confirmed", "rejected", "uncertain"}:
+        return False, "decision_invalid"
+    if response.get("observability") not in {"clear", "partial", "none"}:
+        return False, "observability_invalid"
+    frames = response.get("evidence_frame_indices")
+    if not isinstance(frames, (list, tuple)):
+        return False, "evidence_frame_indices_invalid"
     return True, None
 
 
@@ -279,10 +455,16 @@ def _qwen_adapter_for_smoke(config: ProjectConfig, model_path: Path) -> Any:
         "offload_state_dict": True,
         "enable_thinking": False,
         "release_cuda_cache": bool(config.get("qwen.release_cuda_cache", False)),
+        "memory_fraction": (
+            float(config.get("qwen.gpu_memory_fraction"))
+            if config.get("qwen.gpu_memory_fraction") is not None else None
+        ),
     }
     if bool(config.get("qwen.process_isolation", True)):
+        worker_kwargs = dict(kwargs)
+        worker_kwargs["cuda_alloc_conf"] = str(config.get("qwen.cuda_alloc_conf", "") or "").strip()
         return QwenProcessClient(
-            kwargs,
+            worker_kwargs,
             timeout=float(config.get("qwen.request_timeout_seconds", 300.0)),
         )
     kwargs.pop("model")
@@ -298,6 +480,26 @@ def _smoke_media_list(media: str | Path | Sequence[str | Path]) -> tuple[str | P
     return values
 
 
+def _production_classification_prompt(config: ProjectConfig) -> tuple[str, Any]:
+    """Return the exact S5 classification prompt so smoke measures production.
+
+    A short hardware prompt understates prefill memory and latency: the real
+    prompt is ~1.4k tokens, which dominates the request peak on an 8 GiB device.
+    """
+
+    from .pipeline import _classification_prompt
+    from .research_backend import ResearchBackend
+
+    profile = ResearchBackend(config).profile()
+    prompt = _classification_prompt(
+        [],
+        profile.sha256,
+        action_profile=profile,
+        prompt_version=str(config.get("qwen.prompt_version", "legacy_v1")),
+    )
+    return prompt, profile
+
+
 def run_qwen_smoke(
     config: ProjectConfig,
     image: str | Path | Sequence[str | Path],
@@ -306,13 +508,16 @@ def run_qwen_smoke(
     gate: str = "none",
     command: Sequence[str] | None = None,
     checkpoint_path: str | Path | None = None,
+    production_prompt: bool = False,
 ) -> dict[str, Any]:
     """Issue stateless requests and evaluate allocator stability.
 
     ``development`` requires 20 requests and ``delivery`` requires 100.  The
     delivery contract uses allocator metrics from the isolated worker, excludes
-    requests 1--10 from growth estimates, and records WDDM whole-device usage
-    only as a warning.
+    requests 1--10 from growth estimates, and samples whole-device usage during
+    every request.  Graded runs fail when the observed physical peak exceeds
+    ``min(device_total - 512 MiB, runtime.gpu_budget_gib)`` or when that
+    measurement is missing.
     """
 
     required_repeats = {"none": 1, "development": 20, "delivery": 100}.get(gate)
@@ -363,8 +568,9 @@ def run_qwen_smoke(
         raise RuntimeError("cuda_not_available")
     gpu_index = int(config.get("runtime.gpu_index", 0))
     total_mib = _physical_gpu_total_mib(gpu_index, torch)
+    budget_gib = _physical_gpu_budget_gib(config)
+    physical_limit_mib = _physical_gpu_limit_mib(total_mib, budget_gib)
     physical_measurement_scope = _physical_gpu_measurement_scope()
-    physical_headroom_warning_only = physical_measurement_scope == "device_total_wddm_warning_only"
     adapter: Any = None
     samples: list[dict[str, Any]] = []
     started = time.perf_counter()
@@ -408,20 +614,25 @@ def run_qwen_smoke(
                 warmup_error = f"{type(exc).__name__}:{exc}"[:2000]
             worker_pid = getattr(adapter, "pid", None)
             smoke_process = psutil.Process if psutil is not None else None
-            prompt = (
-                "Inspect only the supplied 480x416 classroom evidence image. The candidate action is "
-                "action_raise_hand: a student visibly raises one or both hands away from the desk to at least "
-                "shoulder height. Confirm only this candidate; reject it when a different action is visible; use "
-                "uncertain when the student or hands cannot be judged. Return exactly one compact JSON object and no Markdown "
-                "with only these fields: decision, behavior, rationale, evidence_frame_indices, observability. "
-                "decision must be confirmed, rejected, or uncertain; observability must be clear, partial, or none. "
-                "Use behavior=action_raise_hand only when confirmed; for rejected or uncertain use behavior=null. "
-                "Use evidence_frame_indices=[0] only when the image visibly supports the decision, otherwise []. "
-                "Keep rationale under 8 Chinese characters."
-            )
+            prompt_profile = None
+            if production_prompt:
+                prompt, prompt_profile = _production_classification_prompt(config)
+            else:
+                prompt = (
+                    "Inspect only the supplied 480x416 classroom evidence image. The candidate action is "
+                    "action_raise_hand: a student visibly raises one or both hands away from the desk to at least "
+                    "shoulder height. Confirm only this candidate; reject it when a different action is visible; use "
+                    "uncertain when the student or hands cannot be judged. Return exactly one compact JSON object and no Markdown "
+                    "with only these fields: decision, behavior, rationale, evidence_frame_indices, observability. "
+                    "decision must be confirmed, rejected, or uncertain; observability must be clear, partial, or none. "
+                    "Use behavior=action_raise_hand only when confirmed; for rejected or uncertain use behavior=null. "
+                    "Use evidence_frame_indices=[0] only when the image visibly supports the decision, otherwise []. "
+                    "Keep rationale under 8 Chinese characters."
+                )
             for iteration in range(repeats):
                 iteration_started = time.perf_counter()
                 request_image_path, request_image_source = smoke_inputs[iteration % len(smoke_inputs)]
+                request_peak_sampler = _PhysicalRequestPeakSampler(gpu_index).start()
                 try:
                     if warmup_error is not None:
                         raise RuntimeError(f"qwen_warmup_failed:{warmup_error}")
@@ -433,7 +644,11 @@ def run_qwen_smoke(
                         prompt=prompt,
                         compact_response=True,
                     )
-                    semantic_ok, semantic_error = _smoke_response_contract(response)
+                    contract = (
+                        _production_response_contract
+                        if production_prompt else _smoke_response_contract
+                    )
+                    semantic_ok, semantic_error = contract(response)
                     if not semantic_ok:
                         raise ValueError(f"qwen_smoke_semantic_contract_failed:{semantic_error}")
                     result: dict[str, Any] = {
@@ -449,6 +664,8 @@ def run_qwen_smoke(
                         "error": error[:1000],
                         "oom": "out of memory" in error.lower() or "cuda oom" in error.lower(),
                     }
+                finally:
+                    request_physical_peak_mib = request_peak_sampler.stop()
                 metrics = _allocator_snapshot(adapter, torch)
                 child_rss = _process_rss_mib(smoke_process, worker_pid)
                 samples.append({
@@ -457,6 +674,10 @@ def run_qwen_smoke(
                     "input_path": str(request_image_path),
                     "input_source": request_image_source,
                     "input_sha256": sha256_file(request_image_path),
+                    "input_tokens": (
+                        getattr(adapter, "last_performance", {}).get("counts", {}).get("input_tokens")
+                        if isinstance(getattr(adapter, "last_performance", None), dict) else None
+                    ),
                     "elapsed_seconds": round(time.perf_counter() - iteration_started, 3),
                     "allocated_bytes": metrics.get("allocated_bytes"),
                     "reserved_bytes": metrics.get("reserved_bytes"),
@@ -467,6 +688,13 @@ def run_qwen_smoke(
                     "num_alloc_retries": metrics.get("num_alloc_retries"),
                     "num_ooms": metrics.get("num_ooms"),
                     "allocator_measurement_scope": "qwen_worker_process" if isinstance(adapter, QwenProcessClient) else "current_process",
+                    **_request_peak_mib_fields(metrics),
+                    "physical_gpu_request_peak_mib": None if request_physical_peak_mib is None else round(float(request_physical_peak_mib), 3),
+                    "physical_gpu_request_peak_samples": request_peak_sampler.samples,
+                    "physical_gpu_request_peak_failures": request_peak_sampler.failures,
+                    "physical_gpu_request_peak_sampling_interval_seconds": request_peak_sampler.interval_seconds,
+                    "physical_gpu_request_peak_missing_reason": request_peak_sampler.missing_reason,
+                    "physical_gpu_request_measurement_scope": "whole_device_sampled_during_request",
                     "physical_gpu_used_mib": _physical_gpu_used_mib(gpu_index),
                     "physical_gpu_measurement_scope": physical_measurement_scope,
                     "physical_gpu_process_used_mib": _physical_gpu_process_used_mib(
@@ -490,6 +718,21 @@ def run_qwen_smoke(
     reserved = [float(row["reserved_mib"]) for row in samples if row.get("reserved_mib") is not None]
     physical = [row.get("physical_gpu_used_mib") for row in samples]
     physical_values = [float(value) for value in physical if value is not None]
+    request_physical = [row.get("physical_gpu_request_peak_mib") for row in samples]
+    request_physical_values = [float(value) for value in request_physical if value is not None]
+    physical_peak_mib = None if not physical_values else max(physical_values)
+    request_peak_mib = None if not request_physical_values else max(request_physical_values)
+    request_peak_samples = sum(int(row.get("physical_gpu_request_peak_samples") or 0) for row in samples)
+    request_peak_failures = sum(int(row.get("physical_gpu_request_peak_failures") or 0) for row in samples)
+    request_peak_missing_reason = None if request_peak_mib is not None else next(
+        (
+            row.get("physical_gpu_request_peak_missing_reason")
+            for row in samples
+            if row.get("physical_gpu_request_peak_missing_reason")
+        ),
+        "no_physical_samples_collected",
+    )
+    physical_peak_missing_reason = None if physical_peak_mib is not None else "end_of_request_memory_used_unavailable"
     physical_process = [row.get("physical_gpu_process_used_mib") for row in samples]
     physical_process_values = [float(value) for value in physical_process if value is not None]
     rss_values = [float(row["process_rss_mib"]) for row in samples if row.get("process_rss_mib") is not None]
@@ -512,7 +755,6 @@ def run_qwen_smoke(
         if _median_window(rss_values, 10, 30) is not None and _median_window(rss_values, 80, 100) is not None
         else None
     )
-    physical_limit_mib = None if total_mib is None else total_mib - 512.0
     blockers: list[str] = []
     warnings: list[str] = []
     if repeats < required_repeats:
@@ -552,16 +794,16 @@ def run_qwen_smoke(
         blockers.append("qwen_worker_did_not_exit_cleanly")
     if gate == "delivery" and physical_process_growth is not None and physical_process_growth > 256.0:
         blockers.append("qwen_worker_physical_growth_exceeds_256_mib")
-    if not physical_values:
-        warnings.append("physical_gpu_memory_measurement_unavailable_wddm")
-    else:
-        if physical_limit_mib is not None and max(physical_values) > physical_limit_mib:
-            if physical_headroom_warning_only:
-                warnings.append("physical_gpu_peak_headroom_below_512_mib_wddm")
-            else:
-                blockers.append("physical_gpu_peak_headroom_below_512_mib")
-        if physical_growth is not None and physical_growth > 256.0:
-            warnings.append("physical_gpu_total_growth_over_256_mib_wddm")
+    peak_blockers, peak_warnings = _physical_peak_gate(
+        gate=gate,
+        physical_peak_mib=physical_peak_mib,
+        request_peak_mib=request_peak_mib,
+        limit_mib=physical_limit_mib,
+    )
+    blockers.extend(peak_blockers)
+    warnings.extend(peak_warnings)
+    if physical_growth is not None and physical_growth > 256.0:
+        warnings.append("physical_gpu_total_growth_over_256_mib_wddm")
     if isinstance(adapter, QwenProcessClient) and not physical_process_values:
         warnings.append("physical_gpu_process_memory_unavailable_wddm")
     status = "ok" if not blockers else (
@@ -594,6 +836,9 @@ def run_qwen_smoke(
             for path, source in smoke_inputs
         ],
         "input_rotation": "round_robin",
+        "prompt_source": "production_classification" if production_prompt else "short_hardware_smoke",
+        "prompt_profile_id": None if prompt_profile is None else prompt_profile.profile_id,
+        "prompt_characters": len(prompt),
         "response_contract": "compact_classification_transport",
         "command": list(command) if command is not None else None,
         "python_executable": sys.executable,
@@ -607,11 +852,29 @@ def run_qwen_smoke(
         "elapsed_seconds": round(time.perf_counter() - started, 3),
         "peak_torch_allocated_gib": round(peak_allocated, 3),
         "peak_torch_reserved_gib": round(peak_reserved, 3),
-        "physical_gpu_peak_mib": None if not physical_values else round(max(physical_values), 3),
+        "physical_gpu_budget_gib": round(budget_gib, 3),
+        "physical_gpu_limit_mib": round(physical_limit_mib, 3),
+        "physical_gpu_peak_mib": None if physical_peak_mib is None else round(physical_peak_mib, 3),
+        "physical_gpu_peak_measurement": {
+            "scope": "whole_device_end_of_request_reading",
+            "peak_mib": None if physical_peak_mib is None else round(physical_peak_mib, 3),
+            "samples": len(physical_values),
+            "missing_reason": physical_peak_missing_reason,
+        },
+        "physical_gpu_request_peak_mib": None if request_peak_mib is None else round(request_peak_mib, 3),
+        "physical_gpu_request_peak_measurement": {
+            "scope": "whole_device_sampled_during_request",
+            "peak_mib": None if request_peak_mib is None else round(request_peak_mib, 3),
+            "samples": request_peak_samples,
+            "failures": request_peak_failures,
+            "interval_seconds": REQUEST_PEAK_SAMPLE_INTERVAL_SECONDS,
+            "missing_reason": request_peak_missing_reason,
+        },
         "physical_gpu_measurement_scope": physical_measurement_scope,
-        "physical_gpu_headroom_gate": "warning" if physical_headroom_warning_only else "hard",
-        "physical_gpu_limit_mib": physical_limit_mib,
-        "physical_gpu_peak_headroom_mib": None if total_mib is None or not physical_values else round(total_mib - max(physical_values), 3),
+        "physical_gpu_headroom_gate": "hard" if gate in {"development", "delivery"} else "warning",
+        "physical_gpu_peak_headroom_mib": None if total_mib is None or physical_peak_mib is None else round(total_mib - physical_peak_mib, 3),
+        "reserved_after_cleanup_mib": None if not reserved else round(reserved[-1], 3),
+        "reserved_after_cleanup_note": "last_sample_reserved_mib_after_request_and_cache_release",
         "physical_gpu_process_peak_mib": None if not physical_process_values else round(max(physical_process_values), 3),
         "physical_gpu_process_growth_first10_to_last10_mib": None if physical_process_growth is None else round(physical_process_growth, 3),
         "reserved_growth_first10_to_last10_mib": None,
@@ -651,8 +914,13 @@ def run_qwen_smoke(
 __all__ = [
     "run_qwen_smoke",
     "_growth_metrics",
+    "_physical_gpu_budget_gib",
+    "_physical_gpu_limit_mib",
     "_physical_gpu_measurement_scope",
     "_physical_gpu_used_mib",
+    "_physical_peak_gate",
+    "_request_peak_mib_fields",
     "_smoke_media_list",
     "_smoke_response_contract",
+    "_PhysicalRequestPeakSampler",
 ]
